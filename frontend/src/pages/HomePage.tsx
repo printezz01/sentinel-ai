@@ -13,8 +13,8 @@ import toast from 'react-hot-toast';
 // Quick-select target examples
 const QUICK_TARGETS = [
   { value: '10.42.1.0/24', label: 'Network subnet', type: 'subnet' as TargetType },
-  { value: 'https://portal.internal', label: 'Web app', type: 'url' as TargetType },
-  { value: 'github.com/OWASP/PyGoat', label: 'Source repo', type: 'github' as TargetType },
+  { value: 'https://printezz.in', label: 'Web app', type: 'url' as TargetType },
+  { value: 'https://github.com/OWASP/NodeGoat', label: 'Source repo', type: 'github' as TargetType },
   { value: '127.0.0.1', label: 'Localhost', type: 'ip' as TargetType },
 ];
 
@@ -55,20 +55,25 @@ export default function HomePage() {
   };
 
   const handleScan = async () => {
-    if (!target.trim()) {
+    let cleanTarget = target.trim();
+    if (!cleanTarget) {
       toast.error('Enter a target to scan');
       return;
     }
 
-    const type = detectTargetType(target);
-    if (!PATTERNS[type].test(target)) {
+    const type = detectTargetType(cleanTarget);
+    if (!PATTERNS[type].test(cleanTarget)) {
       toast.error(`Invalid ${type} format`);
       return;
     }
 
+    if (type === 'github' && !/^https?:\/\//i.test(cleanTarget)) {
+      cleanTarget = `https://${cleanTarget}`;
+    }
+
     setScanning(true);
     try {
-      const res = await startScan({ target, target_type: type });
+      const res = await startScan({ target: cleanTarget, target_type: type });
       setLastScanId(res.scan_id);
       // Navigate to the live scan page
       navigate(`/scan/${res.scan_id}/live`);

@@ -43,7 +43,10 @@ async def _run_scheduled_scan(sub_id: str, target: str, target_type: str, email:
 
         # 3. Generate the PDF report
         session = get_scan_session(scan_id)
-        pdf_bytes = generate_pdf(scan_id, target, session)
+        if not session or session.get("status") != "complete":
+            logger.warning("Scheduled scan failed; not emailing a success report")
+            return
+        pdf_bytes = await asyncio.to_thread(generate_pdf, scan_id, target, session)
 
         # 4. Get stats for the email body
         findings = get_findings(scan_id)
@@ -51,11 +54,12 @@ async def _run_scheduled_scan(sub_id: str, target: str, target_type: str, email:
         risk_score = risk_data.get("score", 50) if isinstance(risk_data, dict) else 50
 
         # 5. Send the email with PDF attached
-        sent = send_report_email(
+        sent = await asyncio.to_thread(send_report_email,
             pdf_bytes=pdf_bytes,
             scan_id=scan_id,
             target=target,
             findings_count=len(findings),
+            recipient=email,
             risk_score=risk_score
         )
 

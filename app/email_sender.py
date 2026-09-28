@@ -12,7 +12,7 @@ from app.config import SMTP_USER, SMTP_PASS, REPORT_EMAIL
 logger = logging.getLogger("sentinel.email")
 
 
-def send_report_email(pdf_bytes: bytes, scan_id: str, target: str, findings_count: int, risk_score: int) -> bool:
+def send_report_email(pdf_bytes: bytes, scan_id: str, target: str, findings_count: int, risk_score: int, recipient: str | None = None) -> bool:
     """
     Send the security scan PDF report to the configured email address.
 
@@ -30,7 +30,7 @@ def send_report_email(pdf_bytes: bytes, scan_id: str, target: str, findings_coun
         logger.warning("SMTP credentials not configured. Skipping email report.")
         return False
 
-    recipient = REPORT_EMAIL or SMTP_USER
+    recipient = recipient or REPORT_EMAIL or SMTP_USER
     severity_label = "CRITICAL" if risk_score < 30 else "HIGH" if risk_score < 60 else "MEDIUM" if risk_score < 80 else "LOW"
 
     try:
@@ -118,7 +118,7 @@ This is an automated report sent every 5 minutes.
         )
 
         # Send via Gmail SMTP
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
             smtp.login(SMTP_USER, SMTP_PASS)
             smtp.send_message(msg)
 

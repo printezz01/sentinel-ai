@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.config import CORS_ORIGINS, ALLOWED_IP_RANGES, ALLOWED_URLS, ALLOWED_GITHUB_REPOS
 from app.db import (
@@ -66,68 +66,7 @@ async def shutdown_event():
 # Target Validation (HARD CONSTRAINT)
 # ══════════════════════════════════════════════════════════════
 
-def _is_local_ip(ip_str: str) -> bool:
-    """Check if an IP is localhost or in a private range."""
-    try:
-        addr = ipaddress.ip_address(ip_str)
-        return addr.is_loopback or addr.is_private
-    except ValueError:
-        return ip_str in ("localhost", "127.0.0.1")
-
-
-def _is_local_subnet(subnet_str: str) -> bool:
-    """Check if a subnet is in allowed private ranges."""
-    try:
-        net = ipaddress.ip_network(subnet_str, strict=False)
-        return net.is_private
-    except ValueError:
-        return False
-
-
-def _is_allowed_url(url: str) -> bool:
-    """Check if a URL points to localhost."""
-    parsed = urlparse(url)
-    host = parsed.hostname or ""
-    return host in ("localhost", "127.0.0.1") or _is_local_ip(host)
-
-
-def _is_allowed_github(url: str) -> bool:
-    """Check if a GitHub URL is in the whitelist."""
-    normalized = url.strip().rstrip("/").removesuffix(".git").lower()
-    for allowed in ALLOWED_GITHUB_REPOS:
-        if normalized == allowed.rstrip("/").removesuffix(".git").lower():
-            return True
-    return False
-
-
-def validate_target(target: str, target_type: str) -> None:
-    """Validate that a target is safe to scan. Raises HTTPException if not."""
-    if target_type == "ip":
-        if not _is_local_ip(target):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Rejected: '{target}' is not a safe local target. Only localhost and private IPs are allowed."
-            )
-    elif target_type == "subnet":
-        if not _is_local_subnet(target):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Rejected: '{target}' is not a safe private subnet."
-            )
-    elif target_type == "url":
-        if not _is_allowed_url(target):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Rejected: '{target}' is not a safe local URL. Only localhost URLs are allowed."
-            )
-    elif target_type == "github":
-        if not _is_allowed_github(target):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Rejected: '{target}' is not in the allowed GitHub repos whitelist. Allowed: {', '.join(ALLOWED_GITHUB_REPOS)}"
-            )
-    else:
-        raise HTTPException(status_code=400, detail=f"Invalid target_type: {target_type}")
+from app.validation import validate_target
 
 
 # ══════════════════════════════════════════════════════════════
@@ -148,9 +87,27 @@ class ChatRequest(BaseModel):
 # ══════════════════════════════════════════════════════════════
 
 async def _run_scan_background(scan_id: str, target: str, target_type: str):
-    """Run the agent scan in background."""
+    """Run the agent scan in background and email the PDF report upon completion."""
     try:
         await run_agent(scan_id, target, target_type)
+        session = get_scan_session(scan_id)
+        if session and session.get("status") == "complete":
+            try:
+                pdf_bytes = await asyncio.to_thread(generate_pdf, scan_id, target, session)
+                findings = get_findings(scan_id)
+                risk_data = calculate_risk_score(scan_id)
+                risk_score = risk_data.get("score", 50) if isinstance(risk_data, dict) else 50
+                from app.email_sender import send_report_email
+                await asyncio.to_thread(
+                    send_report_email,
+                    pdf_bytes=pdf_bytes,
+                    scan_id=scan_id,
+                    target=target,
+                    findings_count=len(findings),
+                    risk_score=risk_score,
+                )
+            except Exception as mail_err:
+                logger.error(f"Failed to email scan report for {scan_id}: {mail_err}")
     except Exception as e:
         logger.error(f"Background scan failed: {e}")
         from app.db import update_scan_status
@@ -173,18 +130,22 @@ async def start_scan(req: ScanRequest, background_tasks: BackgroundTasks):
     Start a new scan session.
     Validates target against whitelist, creates session, starts async scan.
     """
-    validate_target(req.target, req.target_type)
+    target = req.target.strip()
+    if req.target_type == "github" and not target.startswith(("http://", "https://")):
+        target = f"https://{target}"
+
+    validate_target(target, req.target_type)
 
     scan_id = new_uuid()
-    create_scan_session(scan_id, req.target, req.target_type)
-    background_tasks.add_task(_run_scan_background, scan_id, req.target, req.target_type)
+    create_scan_session(scan_id, target, req.target_type)
+    background_tasks.add_task(_run_scan_background, scan_id, target, req.target_type)
 
-    logger.info(f"Scan {scan_id} started for {req.target} ({req.target_type})")
+    logger.info(f"Scan {scan_id} started for {target} ({req.target_type})")
     return {"scan_id": scan_id}
 
 
 @app.get("/scan/{scan_id}/status")
-async def scan_status(scan_id: str):
+def scan_status(scan_id: str):
     """
     Get scan status — polled by frontend every 1-2 seconds.
     Returns current status, active tool, and partial findings.
@@ -200,6 +161,7 @@ async def scan_status(scan_id: str):
             "title": f.get("title"),
             "severity": f.get("severity"),
             "layer": f.get("layer"),
+            "cve_id": f.get("cve_id"),
         }
         for f in findings
     ]
@@ -212,7 +174,7 @@ async def scan_status(scan_id: str):
 
 
 @app.get("/scan/{scan_id}/dashboard")
-async def scan_dashboard(scan_id: str):
+def scan_dashboard(scan_id: str):
     """
     Get full dashboard data including severity breakdown, findings,
     risk score, and OWASP mapping.
@@ -237,6 +199,7 @@ async def scan_dashboard(scan_id: str):
     owasp = map_owasp_findings(scan_id)
 
     return {
+        "status": session.get("status", "unknown"),
         "severity_breakdown": severity_breakdown,
         "findings": findings,
         "risk_score": risk_score,
@@ -245,7 +208,7 @@ async def scan_dashboard(scan_id: str):
 
 
 @app.get("/scan/{scan_id}/chain")
-async def scan_chain(scan_id: str):
+def scan_chain(scan_id: str):
     """Get attack chain as Cytoscape.js-compatible JSON graph."""
     session = get_scan_session(scan_id)
     if not session:
@@ -255,7 +218,7 @@ async def scan_chain(scan_id: str):
 
 
 @app.post("/scan/{scan_id}/chat")
-async def scan_chat(scan_id: str, req: ChatRequest):
+def scan_chat(scan_id: str, req: ChatRequest):
     """
     RAG-powered chat about scan findings.
     Uses Gemini (free) → Claude (paid) → keyword fallback.
@@ -351,24 +314,20 @@ Provide a clear, actionable answer."""
 
 
 @app.get("/scan/{scan_id}/report")
-async def scan_report(scan_id: str):
+def scan_report(scan_id: str):
     """Generate and download PDF security report."""
     session = get_scan_session(scan_id)
     if not session:
         raise HTTPException(status_code=404, detail="Scan not found")
 
+    if session.get("status") != "complete":
+        raise HTTPException(status_code=409, detail="Report requires a completed scan")
+
     try:
         pdf_bytes = generate_pdf(scan_id, session.get("target", "Unknown"), session)
     except Exception as e:
         logger.error(f"PDF generation failed: {e}")
-        # Try returning fixture PDF
-        from app.config import FIXTURES_DIR
-        sample = FIXTURES_DIR / "report_sample.pdf"
-        if sample.exists():
-            with open(sample, "rb") as f:
-                pdf_bytes = f.read()
-        else:
-            raise HTTPException(status_code=500, detail="PDF generation failed")
+        raise HTTPException(status_code=500, detail="PDF generation failed") from e
 
     return Response(
         content=pdf_bytes,
@@ -387,7 +346,7 @@ class SubscribeRequest(BaseModel):
     target: str
     target_type: str   # ip | subnet | url | github
     email: str = "printezz01@gmail.com"
-    interval_minutes: int = 5
+    interval_minutes: int = Field(default=5, ge=1, le=10080)
 
 
 @app.post("/subscribe")

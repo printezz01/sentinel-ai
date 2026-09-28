@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getScanStatus } from '../api/client';
-import type { Finding, Severity } from '../types/api';
+import type { Severity } from '../types/api';
 import { CheckCircle, AlertTriangle, ArrowRight, Loader } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -37,8 +37,6 @@ export default function LiveScanPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const logRef = useRef<HTMLDivElement>(null);
-  const [seenIds, setSeenIds] = useState<Set<string>>(new Set());
-  const [logEntries, setLogEntries] = useState<Finding[]>([]);
   // ── Reliable 1-second timer ──────────────────────
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -48,7 +46,7 @@ export default function LiveScanPage() {
     queryFn: () => getScanStatus(id!),
     refetchInterval: (query) => {
       const s = query.state.data?.status;
-      if (s === 'complete' || s === 'completed' || s === 'failed') return false;
+      if (s === 'complete' || s === 'failed') return false;
       return 1500;
     },
     retry: 1,
@@ -68,7 +66,7 @@ export default function LiveScanPage() {
 
   // Stop the timer when scan completes or fails
   useEffect(() => {
-    if (status?.status === 'complete' || status?.status === 'completed' || status?.status === 'failed') {
+    if (status?.status === 'complete' || status?.status === 'failed') {
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
@@ -76,16 +74,7 @@ export default function LiveScanPage() {
     }
   }, [status?.status]);
 
-  // Track findings
-  useEffect(() => {
-    if (status?.findings_so_far) {
-      // Guarantee unique entries by ID
-      const uniqueFindings = Array.from(
-        new Map(status.findings_so_far.map((f: any) => [f.id, f])).values()
-      ) as Finding[];
-      setLogEntries(uniqueFindings);
-    }
-  }, [status?.findings_so_far]);
+  const logEntries = Array.from(new Map((status?.findings_so_far ?? []).map(f => [f.id, f])).values());
 
   // Auto-scroll terminal
   useEffect(() => {
@@ -102,7 +91,7 @@ export default function LiveScanPage() {
   }, [status?.status]);
 
 
-  const isComplete = status?.status === 'complete' || status?.status === 'completed';
+  const isComplete = status?.status === 'complete';
   const isFailed = status?.status === 'failed';
 
 
@@ -220,10 +209,10 @@ export default function LiveScanPage() {
           <div className="text-sentinel-text-dim mb-3">
             {'>'} Probing target across network, code, web, and IoT surfaces...
           </div>
-          {logEntries.map((finding, i) => (
+          {logEntries.map((finding) => (
             <div key={finding.id} className="terminal-line flex items-start gap-2">
               <span className="text-sentinel-text-dim select-none shrink-0">
-                [{new Date(Date.now() - (logEntries.length - i) * 2000).toLocaleTimeString()}]
+                [finding]
               </span>
               <span
                 className="font-semibold shrink-0 uppercase text-[11px] min-w-[64px]"

@@ -127,11 +127,16 @@ def insert_finding(finding: dict) -> dict:
 
 
 def insert_findings(findings: list[dict], scan_id: str) -> list[dict]:
+    existing = get_findings(scan_id)
+    existing_titles = {e.get("title") for e in existing}
+
     # Extract texts for findings that need embeddings
     texts_to_embed = []
     findings_needing_embed = []
     
     for f in findings:
+        if f.get("title") in existing_titles:
+            continue
         if "embedding" not in f:
             texts_to_embed.append(f"{f.get('title', '')} {f.get('description', '')}")
             findings_needing_embed.append(f)
@@ -150,9 +155,12 @@ def insert_findings(findings: list[dict], scan_id: str) -> list[dict]:
     results = []
     for f in findings:
         f["scan_id"] = scan_id
+        if f.get("title") in existing_titles:
+            continue
         if "id" not in f:
             f["id"] = new_uuid()
         results.append(insert_finding(f))
+        existing_titles.add(f.get("title"))
     return results
 
 
@@ -170,6 +178,13 @@ def get_findings(scan_id: str) -> list[dict]:
 # ══════════════════════════════════════════════════════════════
 # Chain Edges
 # ══════════════════════════════════════════════════════════════
+
+def clear_chain_edges(scan_id: str) -> None:
+    """Replace a scan graph on rebuild instead of accumulating duplicate edges."""
+    if USE_SUPABASE:
+        get_supabase().table("chain_edges").delete().eq("scan_id", scan_id).execute()
+    _mem_chain_edges[scan_id] = []
+
 
 def insert_chain_edge(scan_id: str, from_finding: str, to_finding: str, reason: str) -> dict:
     data = {

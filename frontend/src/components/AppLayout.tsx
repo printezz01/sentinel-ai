@@ -18,20 +18,12 @@ export default function AppLayout() {
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const [backendOnline, setBackendOnline] = useState(true);
-  const [assetsCount, setAssetsCount] = useState(12976);
 
   // Check backend health on mount
   useEffect(() => {
     checkBackendHealth().then(setBackendOnline);
   }, []);
 
-  // Simulate incrementing asset count (reference design has this)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setAssetsCount((c) => c + Math.floor(Math.random() * 3));
-    }, 4000);
-    return () => clearInterval(interval);
-  }, []);
 
   const hasScan = !!id;
   const isHome = location.pathname === '/';
@@ -55,6 +47,7 @@ export default function AppLayout() {
 
   return (
     <div className="flex h-full min-h-screen">
+      {import.meta.env.VITE_USE_MOCKS === 'true' && <div role="status" className="fixed top-0 right-0 z-50 bg-amber-200 text-black px-3 py-1 text-sm">Demo mode: sample data</div>}
       {/* Sidebar */}
       <aside
         className={`sidebar flex flex-col m-3 p-4 transition-all duration-300 shrink-0 ${
@@ -155,15 +148,7 @@ export default function AppLayout() {
               </span>
             </div>
 
-            {/* Assets counter */}
-            <div className="text-right">
-              <div className="text-[10px] text-sentinel-text-dim tracking-widest uppercase">
-                Assets Scanned
-              </div>
-              <div className="text-lg font-semibold text-[#2a2e24] tabular-nums">
-                {assetsCount.toLocaleString()}
-              </div>
-            </div>
+
 
             {/* AI Engine status */}
             <div className="flex items-center gap-2 bg-sentinel-sidebar text-sentinel-text text-xs px-3 py-1.5 rounded-full">

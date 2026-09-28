@@ -4,10 +4,11 @@ Supports four modes (auto-selected based on API keys):
   1. Groq Mode   — Llama 3.3 70B via Groq Cloud (FREE, fastest)
   2. Gemini Mode  — Google Gemini 2.0 Flash via LangChain (FREE)
   3. Claude Mode  — Anthropic Claude via LangChain (PAID)
-  4. Demo Mode    — Runs all tools in sequence without LLM (no API key needed)
+  4. Deterministic Mode    — Runs all tools in sequence without LLM (no API key needed)
 """
 
 import logging
+import asyncio
 
 from app.config import GROQ_API_KEY, GOOGLE_API_KEY, ANTHROPIC_API_KEY
 from app.db import update_scan_status, get_findings
@@ -27,7 +28,7 @@ def _detect_mode() -> str:
         return "gemini"
     if ANTHROPIC_API_KEY and ANTHROPIC_API_KEY.strip():
         return "claude"
-    return "demo"
+    return "deterministic"
 
 
 AGENT_MODE = _detect_mode()
@@ -111,12 +112,12 @@ def _create_langchain_tools(scan_id: str):
 
 
 # ══════════════════════════════════════════════════════════════
-# Demo Mode Runner (FREE — no API keys needed)
+# Deterministic Mode Runner (FREE — no API keys needed)
 # ══════════════════════════════════════════════════════════════
 
-async def _run_demo_mode(scan_id: str, target: str, target_type: str):
+def _run_deterministic_mode(scan_id: str, target: str, target_type: str):
     """Run all relevant tools in sequence based on target_type. No LLM needed."""
-    logger.info(f"[DEMO MODE] Running scan {scan_id} for {target} ({target_type})")
+    logger.info(f"[DETERMINISTIC MODE] Running scan {scan_id} for {target} ({target_type})")
     update_scan_status(scan_id, "running", "initializing")
 
     try:
@@ -173,10 +174,10 @@ async def _run_demo_mode(scan_id: str, target: str, target_type: str):
         logger.info(f"OWASP mapping complete")
 
         update_scan_status(scan_id, "complete", None)
-        logger.info(f"[DEMO MODE] Scan {scan_id} completed successfully")
+        logger.info(f"[DETERMINISTIC MODE] Scan {scan_id} completed successfully")
 
     except Exception as e:
-        logger.error(f"[DEMO MODE] Scan failed: {e}")
+        logger.error(f"[DETERMINISTIC MODE] Scan failed: {e}")
         try:
             build_attack_chain(scan_id)
             calculate_risk_score(scan_id)
@@ -193,7 +194,7 @@ async def _run_demo_mode(scan_id: str, target: str, target_type: str):
 async def _run_groq_mode(scan_id: str, target: str, target_type: str):
     """Run the LangGraph ReAct agent with Groq Cloud (FREE, Llama 3.3 70B)."""
     from langchain_groq import ChatGroq
-    from langgraph.prebuilt import create_react_agent
+    from langgraph.prebuilt import create_react_agent, ToolNode
     from langchain_core.messages import HumanMessage
     from app.config import GROQ_MODEL
 
@@ -218,25 +219,27 @@ async def _run_groq_mode(scan_id: str, target: str, target_type: str):
             max_tokens=4096,
         )
 
-        agent = create_react_agent(llm, tools, prompt=system_prompt)
+        agent = create_react_agent(llm, ToolNode(tools, handle_tool_errors=False), prompt=system_prompt)
         await agent.ainvoke({
             "messages": [HumanMessage(content="Begin scanning now. Use all relevant tools for this target.")]
         })
 
+        # Always build the final graph even if the model omitted that tool.
+        await asyncio.to_thread(build_attack_chain, scan_id)
         # Post-processing
         update_scan_status(scan_id, "running", "calculating_risk_score")
-        calculate_risk_score(scan_id)
+        await asyncio.to_thread(calculate_risk_score, scan_id)
         update_scan_status(scan_id, "running", "mapping_owasp")
-        map_owasp_findings(scan_id)
+        await asyncio.to_thread(map_owasp_findings, scan_id)
         update_scan_status(scan_id, "complete", None)
         logger.info(f"[GROQ MODE] Scan {scan_id} completed successfully")
 
     except Exception as e:
         logger.error(f"[GROQ MODE] Agent failed: {e}")
         try:
-            build_attack_chain(scan_id)
-            calculate_risk_score(scan_id)
-            map_owasp_findings(scan_id)
+            await asyncio.to_thread(build_attack_chain, scan_id)
+            await asyncio.to_thread(calculate_risk_score, scan_id)
+            await asyncio.to_thread(map_owasp_findings, scan_id)
         except Exception:
             pass
         update_scan_status(scan_id, "failed", None)
@@ -249,7 +252,7 @@ async def _run_groq_mode(scan_id: str, target: str, target_type: str):
 async def _run_gemini_mode(scan_id: str, target: str, target_type: str):
     """Run the LangGraph ReAct agent with Google Gemini 2.0 Flash (FREE)."""
     from langchain_google_genai import ChatGoogleGenerativeAI
-    from langgraph.prebuilt import create_react_agent
+    from langgraph.prebuilt import create_react_agent, ToolNode
     from langchain_core.messages import HumanMessage
     from app.config import GEMINI_MODEL
 
@@ -273,25 +276,27 @@ async def _run_gemini_mode(scan_id: str, target: str, target_type: str):
             max_output_tokens=4096,
         )
 
-        agent = create_react_agent(llm, tools, prompt=system_prompt)
+        agent = create_react_agent(llm, ToolNode(tools, handle_tool_errors=False), prompt=system_prompt)
         await agent.ainvoke({
             "messages": [HumanMessage(content="Begin scanning now. Use all relevant tools for this target.")]
         })
 
+        # Always build the final graph even if the model omitted that tool.
+        await asyncio.to_thread(build_attack_chain, scan_id)
         # Post-processing
         update_scan_status(scan_id, "running", "calculating_risk_score")
-        calculate_risk_score(scan_id)
+        await asyncio.to_thread(calculate_risk_score, scan_id)
         update_scan_status(scan_id, "running", "mapping_owasp")
-        map_owasp_findings(scan_id)
+        await asyncio.to_thread(map_owasp_findings, scan_id)
         update_scan_status(scan_id, "complete", None)
         logger.info(f"[GEMINI MODE] Scan {scan_id} completed successfully")
 
     except Exception as e:
         logger.error(f"[GEMINI MODE] Agent failed: {e}")
         try:
-            build_attack_chain(scan_id)
-            calculate_risk_score(scan_id)
-            map_owasp_findings(scan_id)
+            await asyncio.to_thread(build_attack_chain, scan_id)
+            await asyncio.to_thread(calculate_risk_score, scan_id)
+            await asyncio.to_thread(map_owasp_findings, scan_id)
         except Exception:
             pass
         update_scan_status(scan_id, "failed", None)
@@ -304,7 +309,7 @@ async def _run_gemini_mode(scan_id: str, target: str, target_type: str):
 async def _run_claude_mode(scan_id: str, target: str, target_type: str):
     """Run the LangGraph ReAct agent with Claude (PAID fallback)."""
     from langchain_anthropic import ChatAnthropic
-    from langgraph.prebuilt import create_react_agent
+    from langgraph.prebuilt import create_react_agent, ToolNode
     from langchain_core.messages import HumanMessage
     from app.config import CLAUDE_PRIMARY_MODEL, CLAUDE_FALLBACK_MODEL
 
@@ -323,25 +328,27 @@ async def _run_claude_mode(scan_id: str, target: str, target_type: str):
         except Exception:
             llm = ChatAnthropic(model=CLAUDE_FALLBACK_MODEL, api_key=ANTHROPIC_API_KEY, max_tokens=4096, temperature=0)
 
-        agent = create_react_agent(llm, tools, prompt=system_prompt)
+        agent = create_react_agent(llm, ToolNode(tools, handle_tool_errors=False), prompt=system_prompt)
         await agent.ainvoke({
             "messages": [HumanMessage(content="Begin scanning. Use all relevant tools.")]
         })
 
+        # Always build the final graph even if the model omitted that tool.
+        await asyncio.to_thread(build_attack_chain, scan_id)
         # Post-processing
         update_scan_status(scan_id, "running", "calculating_risk_score")
-        calculate_risk_score(scan_id)
+        await asyncio.to_thread(calculate_risk_score, scan_id)
         update_scan_status(scan_id, "running", "mapping_owasp")
-        map_owasp_findings(scan_id)
+        await asyncio.to_thread(map_owasp_findings, scan_id)
         update_scan_status(scan_id, "complete", None)
         logger.info(f"[CLAUDE MODE] Scan {scan_id} completed successfully")
 
     except Exception as e:
         logger.error(f"[CLAUDE MODE] Agent failed: {e}")
         try:
-            build_attack_chain(scan_id)
-            calculate_risk_score(scan_id)
-            map_owasp_findings(scan_id)
+            await asyncio.to_thread(build_attack_chain, scan_id)
+            await asyncio.to_thread(calculate_risk_score, scan_id)
+            await asyncio.to_thread(map_owasp_findings, scan_id)
         except Exception:
             pass
         update_scan_status(scan_id, "failed", None)
@@ -352,7 +359,7 @@ async def _run_claude_mode(scan_id: str, target: str, target_type: str):
 # ══════════════════════════════════════════════════════════════
 
 async def run_agent(scan_id: str, target: str, target_type: str) -> None:
-    """Run the scan — auto-selects Groq → Gemini → Claude → Demo based on API keys."""
+    """Run the scan — auto-selects Groq → Gemini → Claude → deterministic scanners based on API keys."""
     mode = _detect_mode()
 
     if mode == "groq":
@@ -365,15 +372,15 @@ async def run_agent(scan_id: str, target: str, target_type: str) -> None:
         logger.info("🔵 ANTHROPIC_API_KEY found — running in CLAUDE MODE (paid)")
         await _run_claude_mode(scan_id, target, target_type)
     else:
-        logger.info("⚪ No API keys found — running in DEMO MODE (fixture data)")
-        await _run_demo_mode(scan_id, target, target_type)
+        logger.info("⚪ No API keys found — running in DETERMINISTIC MODE (real scanners)")
+        await asyncio.to_thread(_run_deterministic_mode, scan_id, target, target_type)
 
     # Fallback: If the selected LLM mode failed immediately (e.g., Groq 429 Rate Limit)
-    # and no findings were gathered, automatically fall back to Demo Mode.
+    # and no findings were gathered, automatically fall back to Deterministic Mode.
     from app.db import get_scan_session, get_findings
     session = get_scan_session(scan_id)
     if session and session.get("status") == "failed":
         findings = get_findings(scan_id)
-        if len(findings) == 0 and mode != "demo":
-            logger.warning(f"⚠️ {mode.upper()} mode failed with 0 findings. Falling back to DEMO MODE.")
-            await _run_demo_mode(scan_id, target, target_type)
+        if len(findings) == 0 and mode != "deterministic":
+            logger.warning(f"⚠️ {mode.upper()} mode failed with 0 findings. Falling back to DETERMINISTIC MODE.")
+            await asyncio.to_thread(_run_deterministic_mode, scan_id, target, target_type)

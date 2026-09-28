@@ -1,4 +1,5 @@
 # Environment
+.env
 
 # Python
 __pycache__/
@@ -36,3 +37,7 @@ walkthrough.md
 frontend/node_modules/
 frontend/dist/
 frontend/.env
+
+# Local scanner installations
+.tools/
+.scanner-venv/

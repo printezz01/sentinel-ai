@@ -1,6 +1,6 @@
 """
 Sentinel AI — LangChain Tool Definitions
-Each tool wraps an external scanner with fixture fallback.
+Scanner failures propagate; sample findings are never substituted.
 """
 
 import json
@@ -16,23 +16,14 @@ from typing import Optional
 import httpx
 
 from app.config import (
-    FIXTURES_DIR, TEMPCLONES_DIR, NVD_CACHE_PATH,
+    TEMPCLONES_DIR, NVD_CACHE_PATH,
     NVD_API_KEY, NMAP_TIMEOUT, NIKTO_TIMEOUT,
 )
 from app.db import insert_findings, new_uuid
+from app.validation import validate_target
+from app.scanner_runtime import scanner_command
 
 logger = logging.getLogger("sentinel.tools")
-
-
-def _load_fixture(name: str) -> list[dict]:
-    """Load a fixture JSON file as fallback."""
-    path = FIXTURES_DIR / name
-    if path.exists():
-        with open(path, "r") as f:
-            data = json.load(f)
-            return data if isinstance(data, list) else [data]
-    logger.warning(f"Fixture {name} not found")
-    return []
 
 
 # ──────────────────────────────────────────────────────────────
@@ -93,14 +84,19 @@ def _set_cached_cves(service_version: str, data: list[dict]):
 def scan_network(ip_range: str, scan_id: str) -> list[dict]:
     """
     Scan a network target using python-nmap with service/version detection.
-    Hard timeout: 60 seconds. Falls back to fixture on any failure.
+    Hard timeout: 60 seconds. Raises on scanner failure.
     """
+    validate_target(ip_range, "subnet" if "/" in ip_range else "ip")
     try:
         import nmap
-        nm = nmap.PortScanner()
+        nm = nmap.PortScanner(nmap_search_path=tuple(scanner_command("nmap")))
+        if "/" in ip_range:
+            nmap_args = "-sT -T4 --top-ports 50 --open" if os.name == "nt" else "-T4 --top-ports 50 --open"
+        else:
+            nmap_args = "-sT -Pn -sV -T4 --open" if os.name == "nt" else "-sV -T4 --open"
         nm.scan(
             hosts=ip_range,
-            arguments="-sV -T4 --open",
+            arguments=nmap_args,
             timeout=NMAP_TIMEOUT
         )
         findings = []
@@ -137,17 +133,10 @@ def scan_network(ip_range: str, scan_id: str) -> list[dict]:
                         "requires": requires,
                         "raw_output": dict(svc),
                     })
-        if findings:
-            insert_findings(findings, scan_id)
-            return findings
-        raise ValueError("No results from nmap")
-    except Exception as e:
-        logger.warning(f"scan_network failed ({e}), using fixture")
-        findings = _load_fixture("network_scan.json")
-        for f in findings:
-            f["id"] = new_uuid()
         insert_findings(findings, scan_id)
         return findings
+    except Exception as e:
+        raise RuntimeError("scan_network failed; no sample findings were substituted") from e
 
 
 # ══════════════════════════════════════════════════════════════
@@ -200,17 +189,7 @@ def lookup_cve(service: str, version: str) -> list[dict]:
         _set_cached_cves(cache_key, results)
         return results
     except Exception as e:
-        logger.warning(f"lookup_cve failed ({e}), using fixture")
-        fixture = _load_fixture("cve_lookup.json")
-        if isinstance(fixture, list):
-            return fixture
-        # Fixture is a dict keyed by service
-        key = f"{service}_{version}".lower().replace(" ", "_")
-        if isinstance(fixture, dict):
-            for k, v in fixture.items():
-                if service.lower() in k.lower():
-                    return v
-        return []
+        raise RuntimeError("CVE lookup unavailable") from e
 
 
 # ══════════════════════════════════════════════════════════════
@@ -220,8 +199,9 @@ def lookup_cve(service: str, version: str) -> list[dict]:
 def scan_code(github_url: str, scan_id: str) -> list[dict]:
     """
     Clone a GitHub repo and run bandit + semgrep for code analysis.
-    Falls back to fixture on any failure.
+    Raises on scanner failure.
     """
+    validate_target(github_url, "github")
     try:
         TEMPCLONES_DIR.mkdir(parents=True, exist_ok=True)
         clone_dir = TEMPCLONES_DIR / f"code_{new_uuid()[:8]}"
@@ -236,10 +216,14 @@ def scan_code(github_url: str, scan_id: str) -> list[dict]:
         # Run bandit
         try:
             result = subprocess.run(
-                ["bandit", "-r", str(clone_dir), "-f", "json", "-ll"],
-                capture_output=True, timeout=120, text=True
+                [*scanner_command("bandit"), "-r", str(clone_dir), "-f", "json", "-ll"],
+                capture_output=True, timeout=120, encoding="utf-8", errors="replace"
             )
-            bandit_data = json.loads(result.stdout) if result.stdout else {}
+            if result.returncode not in (0, 1):
+                raise RuntimeError("Bandit exited unsuccessfully")
+            bandit_data = json.loads(result.stdout)
+            if bandit_data.get("errors"):
+                logger.warning(f"Bandit had non-fatal parse warnings on {len(bandit_data['errors'])} files")
             for issue in bandit_data.get("results", []):
                 sev_map = {"HIGH": "high", "MEDIUM": "medium", "LOW": "low"}
                 severity = sev_map.get(issue.get("issue_severity", ""), "medium")
@@ -269,44 +253,182 @@ def scan_code(github_url: str, scan_id: str) -> list[dict]:
                     "raw_output": issue,
                 })
         except Exception as e:
-            logger.warning(f"Bandit failed: {e}")
+            raise RuntimeError("Bandit failed") from e
 
         # Run semgrep
         try:
             result = subprocess.run(
-                ["semgrep", "--config=auto", "--json", str(clone_dir)],
-                capture_output=True, timeout=120, text=True
+                [*scanner_command("semgrep"), "--config=p/default", "--metrics=off", "--disable-version-check", "--json", str(clone_dir)],
+                capture_output=True, timeout=120, encoding="utf-8", errors="replace"
             )
+            if result.returncode not in (0, 1):
+                raise RuntimeError(f"Semgrep exited with code {result.returncode}: {result.stderr[:200]}")
             semgrep_data = json.loads(result.stdout) if result.stdout else {}
+            if semgrep_data.get("errors"):
+                logger.warning(f"Semgrep had non-fatal parse warnings on {len(semgrep_data['errors'])} items")
+
+            sem_sev_map = {"ERROR": "high", "WARNING": "medium", "INFO": "low"}
             for r in semgrep_data.get("results", []):
+                check_id = str(r.get("check_id", "")).lower()
+                extra = r.get("extra", {})
+                raw_sev = extra.get("severity", "WARNING").upper()
+                severity = sem_sev_map.get(raw_sev, "medium")
+
+                # Context-aware gives / requires mapping for attack-path chaining
+                if "csrf" in check_id:
+                    gives = "app_data_write"
+                    requires = "web_access"
+                    severity = "critical" if severity in ("high", "medium") else severity
+                elif any(k in check_id for k in ("eval", "exec", "injection", "command-injection", "code-string-concat")):
+                    gives = "command_execution"
+                    requires = "app_data_write"
+                    if severity in ("high", "medium"):
+                        severity = "critical"
+                elif any(k in check_id for k in ("sql", "nosql", "database", "mongo")):
+                    gives = "app_data_read, app_data_write"
+                    requires = "web_access"
+                elif any(k in check_id for k in ("key", "secret", "password", "token", "hash", "credential")):
+                    gives = "server_access, lateral_movement, database_credentials"
+                    requires = "code_read_access"
+                    severity = "critical"
+                elif any(k in check_id for k in ("cookie", "session")):
+                    gives = "session_hijacking, app_data_write"
+                    requires = "web_access"
+                elif "redirect" in check_id:
+                    gives = "web_access"
+                    requires = "internet_access"
+                elif any(k in check_id for k in ("privilege", "docker", "writable-filesystem")):
+                    gives = "privilege_escalation"
+                    requires = "command_execution"
+                elif "http-server" in check_id:
+                    gives = "information_disclosure, web_access"
+                    requires = "internet_access"
+                else:
+                    gives = "information_disclosure"
+                    requires = "code_read_access"
+
                 findings.append({
                     "id": new_uuid(),
                     "layer": "code",
-                    "severity": "medium",
+                    "severity": severity,
                     "title": r.get("check_id", "Semgrep Finding"),
-                    "description": r.get("extra", {}).get("message", "Security issue detected by semgrep"),
+                    "description": extra.get("message", "Security issue detected by semgrep"),
                     "cve_id": None,
-                    "gives": "information_disclosure",
-                    "requires": "code_read_access",
+                    "gives": gives,
+                    "requires": requires,
                     "raw_output": {"rule_id": r.get("check_id"), "path": r.get("path")},
                 })
         except Exception as e:
-            logger.warning(f"Semgrep failed: {e}")
+            raise RuntimeError("Semgrep failed") from e
 
         # Cleanup
         shutil.rmtree(clone_dir, ignore_errors=True)
 
-        if findings:
-            insert_findings(findings, scan_id)
-            return findings
-        raise ValueError("No code findings")
+        consolidated = _consolidate_code_findings(findings, max_findings=7)
+        insert_findings(consolidated, scan_id)
+        return consolidated
     except Exception as e:
-        logger.warning(f"scan_code failed ({e}), using fixture")
-        findings = _load_fixture("code_scan.json")
-        for f in findings:
-            f["id"] = new_uuid()
-        insert_findings(findings, scan_id)
-        return findings
+        raise RuntimeError("scan_code failed; no sample findings were substituted") from e
+
+
+def _clean_code_finding_title(check_id: str) -> str:
+    """Map raw scanner rule IDs to concise, professional vulnerability titles."""
+    low = check_id.lower()
+    if any(k in low for k in ("eval-detected", "eval(")):
+        return "Arbitrary Code Execution via eval()"
+    if "code-string-concat" in low:
+        return "Dynamic Code Injection via String Concatenation"
+    if "private-key" in low or "privatekey" in low:
+        return "Exposed Cryptographic Private Key"
+    if "bcrypt-hash" in low or ("hardcoded" in low and "hash" in low):
+        return "Hardcoded Password Hash (Bcrypt)"
+    if "open-redirect" in low:
+        return "Unvalidated Open URL Redirection"
+    if any(k in low for k in ("cookie", "session")):
+        return "Insecure Session Cookie Configuration"
+    if "csrf" in low:
+        return "Missing Cross-Site Request Forgery (CSRF) Protection"
+    if any(k in low for k in ("writable-filesystem", "no-new-privileges", "docker")):
+        return "Insecure Container Configuration (Docker)"
+    if "http-server" in low:
+        return "Insecure Cleartext Transport (HTTP)"
+    if "sql" in low or "nosql" in low:
+        return "Database Injection Vulnerability"
+    if "password" in low or "hardcoded" in low:
+        return "Hardcoded Credentials in Source Code"
+    last = check_id.split(".")[-1]
+    return last.replace("-", " ").replace("_", " ").title()
+
+
+def _consolidate_code_findings(raw_findings: list[dict], max_findings: int = 7) -> list[dict]:
+    """Group duplicate line-by-line hits into distinct, high-impact security findings."""
+    sev_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+    noise_patterns = ("mutable-action-tag", "plaintext-http-link", "csurf-middleware-usage")
+
+    grouped: dict[str, dict] = {}
+    for f in raw_findings:
+        title_raw = str(f.get("title", ""))
+        raw_output = f.get("raw_output") or {}
+        check_id = raw_output.get("rule_id") or title_raw
+        if any(noise in str(check_id).lower() for noise in noise_patterns):
+            continue
+
+        title = _clean_code_finding_title(str(check_id))
+        path = raw_output.get("path") or f.get("description", "")
+
+        if title not in grouped:
+            item = dict(f)
+            item["title"] = title
+            item["_paths"] = [path] if path else []
+            grouped[title] = item
+        else:
+            cur = grouped[title]
+            if path and path not in cur["_paths"]:
+                cur["_paths"].append(path)
+            if sev_rank.get(f.get("severity", "medium"), 0) > sev_rank.get(cur.get("severity", "medium"), 0):
+                cur["severity"] = f["severity"]
+            if f.get("gives"):
+                cur_gives = {t.strip() for t in cur.get("gives", "").split(",") if t.strip()}
+                new_gives = {t.strip() for t in f["gives"].split(",") if t.strip()}
+                cur["gives"] = ", ".join(sorted(cur_gives | new_gives))
+
+    results = []
+    for item in grouped.values():
+        paths = item.pop("_paths", [])
+        if len(paths) > 1:
+            item["description"] = f"{item['description']} (Detected across {len(paths)} locations in codebase)"
+        results.append(item)
+
+    results.sort(key=lambda x: sev_rank.get(x.get("severity", "medium"), 0), reverse=True)
+    return results[:max_findings]
+
+
+def _consolidate_secret_findings(raw_findings: list[dict], max_findings: int = 2) -> list[dict]:
+    """Group duplicate leaked secret findings by detector type."""
+    grouped: dict[str, dict] = {}
+    for f in raw_findings:
+        raw_output = f.get("raw_output") or {}
+        detector = str(raw_output.get("detector") or f.get("title", ""))
+        if "privatekey" in detector.lower() or "private-key" in detector.lower():
+            title = "Exposed Cryptographic Private Key"
+        else:
+            title = f"Leaked Secret: {detector}"
+
+        if title not in grouped:
+            item = dict(f)
+            item["title"] = title
+            item["_count"] = 1
+            grouped[title] = item
+        else:
+            grouped[title]["_count"] += 1
+
+    results = []
+    for item in grouped.values():
+        count = item.pop("_count", 1)
+        if count > 1:
+            item["description"] = f"{item['description']} ({count} instances detected)"
+        results.append(item)
+    return results[:max_findings]
 
 
 # ══════════════════════════════════════════════════════════════
@@ -318,6 +440,7 @@ def scan_secrets(github_url: str, scan_id: str) -> list[dict]:
     Clone a repo and run trufflehog with --no-verification.
     Redacts secret values to first 4 + last 4 characters.
     """
+    validate_target(github_url, "github")
     try:
         TEMPCLONES_DIR.mkdir(parents=True, exist_ok=True)
         clone_dir = TEMPCLONES_DIR / f"secrets_{new_uuid()[:8]}"
@@ -328,10 +451,12 @@ def scan_secrets(github_url: str, scan_id: str) -> list[dict]:
         )
 
         result = subprocess.run(
-            ["trufflehog", "filesystem", str(clone_dir), "--no-verification", "--json"],
-            capture_output=True, timeout=120, text=True
+            [*scanner_command("trufflehog"), "filesystem", str(clone_dir), "--no-verification", "--no-update", "--json"],
+            capture_output=True, timeout=120, encoding="utf-8", errors="replace"
         )
 
+        if result.returncode != 0:
+            raise RuntimeError("TruffleHog exited unsuccessfully")
         findings = []
         for line in (result.stdout or "").strip().split("\n"):
             if not line.strip():
@@ -356,42 +481,46 @@ def scan_secrets(github_url: str, scan_id: str) -> list[dict]:
                         "verified": False,
                     },
                 })
-            except json.JSONDecodeError:
-                continue
+            except json.JSONDecodeError as e:
+                raise RuntimeError("Invalid TruffleHog output") from e
 
         shutil.rmtree(clone_dir, ignore_errors=True)
 
-        if findings:
-            insert_findings(findings, scan_id)
-            return findings
-        raise ValueError("No secrets found")
+        consolidated = _consolidate_secret_findings(findings, max_findings=2)
+        insert_findings(consolidated, scan_id)
+        return consolidated
     except Exception as e:
-        logger.warning(f"scan_secrets failed ({e}), using fixture")
-        findings = _load_fixture("secrets_scan.json")
-        for f in findings:
-            f["id"] = new_uuid()
-        insert_findings(findings, scan_id)
-        return findings
+        raise RuntimeError("scan_secrets failed; no sample findings were substituted") from e
 
 
 # ══════════════════════════════════════════════════════════════
 # TOOL: scan_web
 # ══════════════════════════════════════════════════════════════
 
-def scan_web(url: str, scan_id: str) -> list[dict]:
+def scan_web(url: str, scan_id: str, *, plugins: str | None = None) -> list[dict]:
     """
     Run nikto web scanner with 90-second timeout.
-    Falls back to fixture on failure.
+    Raises on scanner failure.
     """
+    validate_target(url, "url")
+    active_plugins = plugins or "headers;cookies;options;robots"
     try:
-        result = subprocess.run(
-            ["nikto", "-h", url, "-Format", "json", "-o", "-"],
-            capture_output=True, timeout=NIKTO_TIMEOUT, text=True
-        )
+        with tempfile.TemporaryDirectory(prefix="fusionx-nikto-") as directory:
+            report = Path(directory) / "report.json"
+            command = [*scanner_command("nikto"), "-h", url, "-nocheck", "-nointeractive",
+                       "-Format", "json", "-o", report.as_posix(),
+                       "-Plugins", f"{active_plugins};report_json"]
+            result = subprocess.run(command, capture_output=True, timeout=NIKTO_TIMEOUT,
+                                    text=True, encoding="utf-8", errors="replace")
+            if result.returncode != 0:
+                raise RuntimeError("Nikto exited unsuccessfully")
+            nikto_data = json.loads(report.read_text(encoding="utf-8"))
         findings = []
         try:
-            nikto_data = json.loads(result.stdout) if result.stdout else {}
-            for vuln in nikto_data.get("vulnerabilities", []):
+            hosts = nikto_data if isinstance(nikto_data, list) else [nikto_data]
+            if not hosts or any(not isinstance(host, dict) or "vulnerabilities" not in host for host in hosts):
+                raise ValueError("Nikto did not produce a completed host report")
+            for vuln in (v for host in hosts for v in host["vulnerabilities"]):
                 title = vuln.get("msg", "Web Vulnerability")
                 lower_title = title.lower()
                 if "sql" in lower_title or "injection" in lower_title:
@@ -425,17 +554,10 @@ def scan_web(url: str, scan_id: str) -> list[dict]:
         except json.JSONDecodeError:
             raise ValueError("Could not parse nikto output")
 
-        if findings:
-            insert_findings(findings, scan_id)
-            return findings
-        raise ValueError("No web findings")
-    except Exception as e:
-        logger.warning(f"scan_web failed ({e}), using fixture")
-        findings = _load_fixture("web_scan.json")
-        for f in findings:
-            f["id"] = new_uuid()
         insert_findings(findings, scan_id)
         return findings
+    except Exception as e:
+        raise RuntimeError("scan_web failed; no sample findings were substituted") from e
 
 
 # ══════════════════════════════════════════════════════════════
@@ -445,36 +567,39 @@ def scan_web(url: str, scan_id: str) -> list[dict]:
 def scan_cctv(ip: str, scan_id: str) -> list[dict]:
     """
     Check for Hikvision/Dahua camera fingerprints via HTTP banner.
-    Falls back to fixture if camera is unreachable.
+    Raises if the camera endpoint is unreachable.
     """
+    validate_target(ip, "ip")
     try:
         resp = httpx.get(f"http://{ip}", timeout=10)
+    except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError):
+        # Target machine actively refused or timed out on HTTP port -> no camera running
+        return []
+    except Exception as e:
+        raise RuntimeError("scan_cctv failed; no sample findings were substituted") from e
+
+    try:
         headers = resp.headers
         body = resp.text.lower()
         is_hikvision = "hikvision" in body or "hikvision" in headers.get("server", "").lower()
         is_dahua = "dahua" in body or "dahua" in headers.get("server", "").lower()
 
         if not (is_hikvision or is_dahua):
-            raise ValueError("No camera fingerprint detected")
+            return []
 
         brand = "Hikvision" if is_hikvision else "Dahua"
         findings = [{
             "id": new_uuid(),
             "layer": "iot",
-            "severity": "critical",
-            "title": f"{brand} IP Camera — Remote Code Execution",
-            "description": f"{brand} camera detected at {ip}. Vulnerable to CVE-2021-36260 (CVSS 9.8).",
-            "cve_id": "CVE-2021-36260",
-            "gives": "camera_access, command_execution, lateral_movement",
+            "severity": "info",
+            "title": f"{brand} camera fingerprint detected",
+            "description": f"{brand} fingerprint at {ip}. Firmware and vulnerability status are unverified.",
+            "cve_id": None,
+            "gives": "",
             "requires": "internal_network_access",
-            "raw_output": {"ip": ip, "brand": brand, "cve": "CVE-2021-36260", "cvss": 9.8},
+            "raw_output": {"ip": ip, "brand": brand},
         }]
         insert_findings(findings, scan_id)
         return findings
     except Exception as e:
-        logger.warning(f"scan_cctv failed ({e}), using fixture")
-        findings = _load_fixture("cctv_scan.json")
-        for f in findings:
-            f["id"] = new_uuid()
-        insert_findings(findings, scan_id)
-        return findings
+        raise RuntimeError("scan_cctv failed; no sample findings were substituted") from e

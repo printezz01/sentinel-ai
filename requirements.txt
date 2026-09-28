@@ -8,7 +8,14 @@ uvicorn[standard]==0.34.0
 
 # LangChain agent
 langchain==0.3.14
-langchain-core==0.3.29
+langchain-core==0.3.63
+langchain-text-splitters==0.3.8
+langsmith==0.2.11
+langgraph==0.4.8
+langgraph-prebuilt==0.2.2
+langgraph-checkpoint==2.0.26
+langgraph-sdk==0.1.70
+APScheduler==3.11.3
 langchain-community==0.3.14
 
 # Groq Cloud (FREE — primary LLM, Llama 3.3 70B)
@@ -25,8 +32,7 @@ anthropic==0.42.0
 
 # Supabase
 supabase==2.11.0
-postgrest==0.18.0
-vecs==0.4.4
+postgrest==0.19.3
 
 # Network scanning
 python-nmap==0.7.1

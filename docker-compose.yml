@@ -18,7 +18,7 @@ services:
     container_name: sentinel-metasploitable
     ports:
       - "4222:22"    # SSH
-      - "4280:80"    # HTTP (remapped if dvwa occupies 4280)
+      - "4281:80"    # HTTP for Metasploitable
       - "5432:5432"  # PostgreSQL
       - "3306:3306"  # MySQL
     restart: unless-stopped

@@ -241,7 +241,7 @@ export function getMockScanStatus(scanId: string): ScanStatusResponse {
 
   return {
     scan_id: scanId,
-    status: isComplete ? 'completed' : 'running',
+    status: isComplete ? 'complete' : 'running',
     current_tool: isComplete ? null : SCAN_TOOLS[mockToolIndex],
     elapsed_seconds: Math.floor(mockElapsed),
     findings_so_far: MOCK_FINDINGS.slice(0, mockFindingsRevealed),

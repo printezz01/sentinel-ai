@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════
 
 export type TargetType = 'ip' | 'subnet' | 'url' | 'github';
-export type ScanStatus = 'running' | 'completed' | 'failed';
+export type ScanStatus = 'queued' | 'running' | 'complete' | 'failed';
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 export type Layer = 'network' | 'code' | 'web' | 'iot';
 
@@ -28,11 +28,11 @@ export interface ScanResponse {
 }
 
 export interface ScanStatusResponse {
-  scan_id: string;
+  scan_id?: string;
   status: ScanStatus;
   current_tool: string | null;
-  elapsed_seconds: number;
-  findings_so_far: Finding[];
+  elapsed_seconds?: number;
+  findings_so_far: Pick<Finding, 'id' | 'title' | 'severity' | 'layer' | 'cve_id'>[];
 }
 
 export interface SeverityBreakdown {
@@ -54,6 +54,7 @@ export interface OwaspCategory {
 }
 
 export interface DashboardResponse {
+  status?: ScanStatus;
   severity_breakdown: SeverityBreakdown;
   findings: Finding[];
   risk_score: RiskScore | number;
@@ -90,7 +91,7 @@ export interface ChatRequest {
 
 export interface ChatResponse {
   answer: string;
-  sources: Finding[];
+  sources?: Finding[];
   context?: Finding[];
 }
 

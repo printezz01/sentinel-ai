@@ -130,7 +130,7 @@ FUSIONX/
 │   ├── reporting.py       # PDF report generator
 │   ├── config.py          # Configuration & whitelist
 │   └── db.py              # Supabase database layer
-├── fixtures/              # Fallback JSON for offline mode
+├── fixtures/              # Sample data for development only
 ├── migrations/            # Supabase SQL migrations
 ├── scripts/               # Setup automation
 ├── docker-compose.yml     # Demo target containers
@@ -143,11 +143,12 @@ FUSIONX/
 
 ## 🔐 Safety Constraints
 
-This tool **ONLY** scans safe, local targets:
+Target validation allows loopback/private networks and explicitly listed GitHub repositories:
 - ✅ DVWA (Docker, localhost)
 - ✅ Metasploitable (Docker, localhost)
 - ✅ Whitelisted OWASP GitHub repos
-- ❌ All other targets → HTTP 400
+- ✅ Private ranges configured in `app/config.py`
+- ❌ Other targets → HTTP 400 at the API and scanner boundary
 
 ---
 
@@ -172,10 +173,63 @@ This tool **ONLY** scans safe, local targets:
 | 🟢 Groq | `GROQ_API_KEY` | **FREE** | Llama 3.3 70B (fastest) |
 | 🟢 Gemini | `GOOGLE_API_KEY` | **FREE** | Gemini 2.0 Flash |
 | 🔵 Claude | `ANTHROPIC_API_KEY` | Paid | Claude Sonnet |
-| ⚪ Demo | None needed | Free | Scripted pipeline |
+| ⚪ Deterministic | None needed | Free | Real scanners in a fixed sequence |
 
-Priority: **Groq → Gemini → Claude → Demo**. Just add your Groq API key to `.env` to enable AI-powered scanning!
+Priority: **Groq → Gemini → Claude → deterministic scanners**. Just add your Groq API key to `.env` to enable AI-powered scanning!
 
 ---
 
 **Built for hackathon demo purposes only. Not a production security tool.**
+
+## Local verification and runtime behavior
+
+Install backend dependencies in an activated Python 3.11+ virtual environment with
+`python -m pip install -r requirements.txt`. Then run:
+
+```bash
+python -m pip check
+python -m unittest discover -s tests -v
+cd frontend
+npm ci
+npm run build
+npm run lint
+```
+
+Run the API with `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000`
+and the frontend with `npm run dev` in `frontend`.
+
+Real scans require the corresponding executable on PATH: nmap for networks,
+Nikto for web scans, Bandit and Semgrep for code, and the TruffleHog v3 binary
+for secrets. Missing tools, invalid output, and scanner failures now fail the scan;
+a successful scan with no findings stays empty. Backend scans never load fixtures.
+Without an LLM key, the same real tools run in a deterministic sequence.
+Frontend-only sample data remains available with `VITE_USE_MOCKS=true`.
+
+The regression suite isolates external providers, SMTP, and scanner processes.
+It does not verify your external API credentials or installed scanner binaries.
+Scheduled email uses each subscription's recipient and only sends completed scans.
+Reports for failed or unfinished scans return HTTP 409. Metasploitable HTTP uses
+port 4281; DVWA uses port 4280. The API remains intended for local development.
+
+The Groq model can be selected with `GROQ_MODEL`; the default is
+`llama-3.3-70b-versatile`, listed in the
+[Groq model documentation](https://console.groq.com/docs/model/llama-3.3-70b-versatile).
+
+## Windows scanner installation on this machine
+
+Project-local tools are discovered automatically by `app/scanner_runtime.py`;
+activating a global PATH is unnecessary. The isolated `.scanner-venv` contains
+Bandit 1.9.4 and Semgrep 1.178.0, pinned in `requirements-scanners.txt`.
+`.tools` contains TruffleHog 3.97.9 and Nmap 7.991. Nmap uses TCP connect scans
+on Windows, without requiring Npcap. These local installations are git-ignored.
+
+```powershell
+.\venv\Scripts\python.exe scripts/check_scanners.py
+.\venv\Scripts\python.exe scripts/smoke_scanners.py
+```
+
+The smoke test uses temporary local code and a loopback server. It neither scans
+external targets nor uses provider credentials. Nikto's official source was
+downloaded, but Windows Defender quarantined `program/nikto.pl`. Web scanning
+remains unavailable unless that specific detection is reviewed and allowed.
+No antivirus exclusions or protection settings were changed during setup.

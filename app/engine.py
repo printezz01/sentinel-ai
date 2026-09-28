@@ -15,7 +15,7 @@ from app.config import (
     VOYAGE_API_KEY, OPENAI_API_KEY,
 )
 from app.db import (
-    get_findings, insert_chain_edge, get_chain_edges,
+    get_findings, insert_chain_edge, get_chain_edges, clear_chain_edges,
     upsert_risk_score, insert_owasp_mapping, new_uuid,
 )
 
@@ -37,66 +37,59 @@ def build_attack_chain(scan_id: str) -> dict:
     Edge A→B exists when tokens in A.gives overlap with tokens in B.requires.
     Returns Cytoscape.js-compatible JSON.
     """
-    try:
-        findings = get_findings(scan_id)
-        if not findings:
-            raise ValueError("No findings to chain")
-
-        G = nx.DiGraph()
-
-        # Add nodes
-        for f in findings:
-            G.add_node(f["id"], **{
-                "label": f["title"],
-                "severity": f.get("severity", "info"),
-                "layer": f.get("layer", "unknown"),
-                "gives": f.get("gives", ""),
-                "requires": f.get("requires", ""),
-            })
-
-        # Add edges: A→B if A.gives overlaps B.requires
-        for a in findings:
-            a_gives = _tokenize(a.get("gives", ""))
-            for b in findings:
-                if a["id"] == b["id"]:
-                    continue
-                b_requires = _tokenize(b.get("requires", ""))
-                overlap = a_gives & b_requires
-                if overlap:
-                    reason = f"{a['title']} provides {', '.join(overlap)} needed by {b['title']}"
-                    G.add_edge(a["id"], b["id"], reason=reason)
-                    insert_chain_edge(scan_id, a["id"], b["id"], reason)
-
-        # Build Cytoscape.js JSON
-        nodes = []
-        for node_id, data in G.nodes(data=True):
-            nodes.append({
-                "data": {
-                    "id": node_id,
-                    "label": data.get("label", ""),
-                    "severity": data.get("severity", "info"),
-                    "layer": data.get("layer", "unknown"),
-                }
-            })
-
-        edges = []
-        for source, target, data in G.edges(data=True):
-            edges.append({
-                "data": {
-                    "source": source,
-                    "target": target,
-                    "reason": data.get("reason", ""),
-                }
-            })
-
-        return {"nodes": nodes, "edges": edges}
-    except Exception as e:
-        logger.warning(f"build_attack_chain failed ({e}), using fixture")
-        fixture_path = FIXTURES_DIR / "attack_chain.json"
-        if fixture_path.exists():
-            with open(fixture_path) as f:
-                return json.load(f)
+    findings = get_findings(scan_id)
+    clear_chain_edges(scan_id)
+    if not findings:
         return {"nodes": [], "edges": []}
+
+    G = nx.DiGraph()
+
+    # Add nodes
+    for f in findings:
+        G.add_node(f["id"], **{
+            "label": f["title"],
+            "severity": f.get("severity", "info"),
+            "layer": f.get("layer", "unknown"),
+            "gives": f.get("gives", ""),
+            "requires": f.get("requires", ""),
+        })
+
+    # Add edges: A→B if A.gives overlaps B.requires
+    for a in findings:
+        a_gives = _tokenize(a.get("gives", ""))
+        for b in findings:
+            if a["id"] == b["id"]:
+                continue
+            b_requires = _tokenize(b.get("requires", ""))
+            overlap = a_gives & b_requires
+            if overlap:
+                reason = f"{a['title']} provides {', '.join(overlap)} needed by {b['title']}"
+                G.add_edge(a["id"], b["id"], reason=reason)
+                insert_chain_edge(scan_id, a["id"], b["id"], reason)
+
+    # Build Cytoscape.js JSON
+    nodes = []
+    for node_id, data in G.nodes(data=True):
+        nodes.append({
+            "data": {
+                "id": node_id,
+                "label": data.get("label", ""),
+                "severity": data.get("severity", "info"),
+                "layer": data.get("layer", "unknown"),
+            }
+        })
+
+    edges = []
+    for source, target, data in G.edges(data=True):
+        edges.append({
+            "data": {
+                "source": source,
+                "target": target,
+                "reason": data.get("reason", ""),
+            }
+        })
+
+    return {"nodes": nodes, "edges": edges}
 
 
 def get_chain_graph(scan_id: str) -> dict:
@@ -136,6 +129,14 @@ def get_chain_graph(scan_id: str) -> dict:
 # Risk Score Calculator (Section 6)
 # ══════════════════════════════════════════════════════════════
 
+def _has_path_of_three_edges(graph, node, visited):
+    """Bounded simple-path search: duplicates, disconnected edges and cycles do not count."""
+    if len(visited) >= 4:
+        return True
+    return any(_has_path_of_three_edges(graph, neighbor, visited | {neighbor})
+               for neighbor in graph.successors(node) if neighbor not in visited)
+
+
 def calculate_risk_score(scan_id: str) -> dict:
     """
     Calculate risk score starting at 100, subtracting per severity.
@@ -163,7 +164,8 @@ def calculate_risk_score(scan_id: str) -> dict:
     chain_deduction = 0
     try:
         chain = get_chain_edges(scan_id)
-        if len(chain) >= 3:
+        graph = nx.DiGraph((e["from_finding"], e["to_finding"]) for e in chain)
+        if any(_has_path_of_three_edges(graph, node, {node}) for node in graph):
             chain_deduction = 10
     except Exception:
         pass
@@ -245,7 +247,6 @@ def map_owasp_findings(scan_id: str) -> dict:
         category = _classify_owasp(f)
         if category in category_findings:
             category_findings[category].append(f["id"])
-        insert_owasp_mapping(f.get("id", new_uuid()), category)
 
     result = {}
     for cat in OWASP_CATEGORIES:

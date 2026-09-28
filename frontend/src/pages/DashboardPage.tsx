@@ -74,19 +74,19 @@ export default function DashboardPage() {
       { name: 'Low', value: sb.low, color: SEVERITY_COLORS.low },
       { name: 'Info', value: sb.info, color: SEVERITY_COLORS.info },
     ].filter((d) => d.value > 0);
-  }, [data?.severity_breakdown]);
+  }, [data]);
 
   const totalFindings = useMemo(() => {
     if (!data?.severity_breakdown) return 0;
     const sb = data.severity_breakdown;
     return sb.critical + sb.high + sb.medium + sb.low + sb.info;
-  }, [data?.severity_breakdown]);
+  }, [data]);
 
   const filteredFindings = useMemo(() => {
     if (!data?.findings) return [];
     if (severityFilter === 'all') return data.findings;
     return data.findings.filter((f) => f.severity === severityFilter);
-  }, [data?.findings, severityFilter]);
+  }, [data, severityFilter]);
 
   const owaspData = useMemo((): OwaspCategory[] => {
     if (!data?.owasp_mapping) return [];
@@ -99,7 +99,13 @@ export default function DashboardPage() {
         ? (data.findings || []).slice(0, 2) // Just show some findings for fail categories
         : [],
     }));
-  }, [data?.owasp_mapping, data?.findings]);
+  }, [data]);
+
+  if (data?.status && data.status !== 'complete') {
+    return <div role="alert" className="p-6 text-sentinel-text">
+      {data.status === 'failed' ? 'Scan failed. Results are incomplete; no security score is available.' : 'Scan is still running. Results will be available when it completes.'}
+    </div>;
+  }
 
   if (isLoading) {
     return (

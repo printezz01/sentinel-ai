@@ -39,7 +39,7 @@ export default function ChatPage() {
     if (!question || loading || !id) return;
 
     const userMsg: ChatMessage = {
-      id: `user-${Date.now()}`,
+      id: `user-${crypto.randomUUID()}`,
       role: 'user',
       content: question,
       timestamp: new Date(),
@@ -52,14 +52,14 @@ export default function ChatPage() {
     try {
       const res = await sendChat(id, question);
       const assistantMsg: ChatMessage = {
-        id: `assistant-${Date.now()}`,
+        id: `assistant-${crypto.randomUUID()}`,
         role: 'assistant',
         content: res.answer,
         sources: res.sources || res.context,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, assistantMsg]);
-    } catch (err) {
+    } catch {
       toast.error('Failed to get response');
       setInput(question); // Restore text on error
     } finally {

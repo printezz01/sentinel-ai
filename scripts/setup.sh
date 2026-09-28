@@ -34,11 +34,8 @@ if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     pip install semgrep==1.96.0 --quiet
 
     echo "[+] Installing trufflehog..."
-    # trufflehog is a Go binary — install via pip wrapper or download
-    pip install trufflehog==2.2.1 --quiet 2>/dev/null || {
-        echo "[!] pip trufflehog failed — trying binary install..."
-        curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
-    }
+    # Install the v3 Go binary (the Python v2 package has a different CLI).
+    curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
 
 elif [[ "$OSTYPE" == "darwin"* ]]; then
     echo "[*] Detected macOS"
@@ -48,7 +45,7 @@ elif [[ "$OSTYPE" == "darwin"* ]]; then
 
     pip install bandit==1.7.10 --quiet
     pip install semgrep==1.96.0 --quiet
-    brew install trufflehog 2>/dev/null || pip install trufflehog==2.2.1 --quiet
+    brew install trufflehog
 
 else
     echo "[!] Unsupported OS: $OSTYPE"

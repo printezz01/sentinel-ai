@@ -52,7 +52,7 @@ export default function ChainPage() {
   const { id } = useParams<{ id: string }>();
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
-  const [selectedNode, setSelectedNode] = useState<ChainNode['data'] | null>(null);
+  const [selectedNode, setSelectedNode] = useState<(ChainNode['data'] & { shortLabel: string; fullLabel: string }) | null>(null);
 
   const { data: chainData } = useQuery({
     queryKey: ['chain', id],
@@ -85,48 +85,7 @@ export default function ChainPage() {
       };
     });
 
-    // If backend returned no edges, create synthetic connections
-    let processedEdges = chainData.edges.map((e) => ({
-      group: 'edges' as const,
-      data: e.data,
-    }));
-
-    if (processedEdges.length === 0 && processedNodes.length > 1) {
-      // Create a plausible attack path: connect nodes in a chain with some branches
-      const nodeIds = processedNodes.map((n) => n.data.id);
-      const syntheticEdges: { group: 'edges'; data: { source: string; target: string; reason: string } }[] = [];
-
-      for (let i = 0; i < nodeIds.length - 1; i++) {
-        syntheticEdges.push({
-          group: 'edges',
-          data: {
-            source: nodeIds[i],
-            target: nodeIds[i + 1],
-            reason: 'attack chain',
-          },
-        });
-      }
-      // Add a few cross-links for a more organic graph
-      if (nodeIds.length > 3) {
-        syntheticEdges.push({
-          group: 'edges',
-          data: { source: nodeIds[0], target: nodeIds[3], reason: 'lateral movement' },
-        });
-      }
-      if (nodeIds.length > 5) {
-        syntheticEdges.push({
-          group: 'edges',
-          data: { source: nodeIds[2], target: nodeIds[5], reason: 'privilege escalation' },
-        });
-      }
-      if (nodeIds.length > 6) {
-        syntheticEdges.push({
-          group: 'edges',
-          data: { source: nodeIds[4], target: nodeIds[6], reason: 'data exfiltration' },
-        });
-      }
-      processedEdges = syntheticEdges;
-    }
+    const processedEdges = chainData.edges.map(e => ({ group: 'edges' as const, data: e.data }));
 
     const cy = cytoscape({
       container: containerRef.current,
