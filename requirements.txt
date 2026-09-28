@@ -40,6 +40,10 @@ python-nmap==0.7.1
 # Graph engine
 networkx==3.4.2
 
+# Code scanning
+bandit>=1.7.5
+semgrep>=1.90.0
+
 # Embeddings
 voyageai>=0.3.2
 openai==1.58.1
