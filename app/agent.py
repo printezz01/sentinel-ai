@@ -152,13 +152,19 @@ def _run_deterministic_mode(scan_id: str, target: str, target_type: str):
             logger.info(f"Web scan: {len(web_findings)} findings")
 
         elif target_type == "github":
-            update_scan_status(scan_id, "running", "scan_code")
-            code_findings = scan_code(target, scan_id)
-            logger.info(f"Code scan: {len(code_findings)} findings")
+            try:
+                update_scan_status(scan_id, "running", "scan_code")
+                code_findings = scan_code(target, scan_id)
+                logger.info(f"Code scan: {len(code_findings)} findings")
+            except Exception as e:
+                logger.warning(f"Code scan failed: {e}")
 
-            update_scan_status(scan_id, "running", "scan_secrets")
-            secret_findings = scan_secrets(target, scan_id)
-            logger.info(f"Secrets scan: {len(secret_findings)} findings")
+            try:
+                update_scan_status(scan_id, "running", "scan_secrets")
+                secret_findings = scan_secrets(target, scan_id)
+                logger.info(f"Secrets scan: {len(secret_findings)} findings")
+            except Exception as e:
+                logger.warning(f"Secrets scan failed: {e}")
 
         # Post-processing (always runs)
         update_scan_status(scan_id, "running", "build_attack_chain")
@@ -178,12 +184,17 @@ def _run_deterministic_mode(scan_id: str, target: str, target_type: str):
 
     except Exception as e:
         logger.error(f"[DETERMINISTIC MODE] Scan failed: {e}")
-        try:
-            build_attack_chain(scan_id)
-            calculate_risk_score(scan_id)
-            map_owasp_findings(scan_id)
-        except Exception:
-            pass
+        findings = get_findings(scan_id)
+        if findings:
+            try:
+                build_attack_chain(scan_id)
+                calculate_risk_score(scan_id)
+                map_owasp_findings(scan_id)
+                update_scan_status(scan_id, "complete", None)
+                logger.info(f"[DETERMINISTIC MODE] Scan {scan_id} completed with discovered findings")
+                return
+            except Exception as pe:
+                logger.error(f"Post-processing failed: {pe}")
         update_scan_status(scan_id, "failed", None)
 
 
