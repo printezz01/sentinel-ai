@@ -6,6 +6,8 @@ Scanner failures propagate; sample findings are never substituted.
 import json
 import logging
 import os
+import re
+import socket
 import shutil
 import subprocess
 import tempfile
@@ -81,12 +83,55 @@ def _set_cached_cves(service_version: str, data: list[dict]):
 # TOOL: scan_network
 # ══════════════════════════════════════════════════════════════
 
+def _scan_network_native(ip_range: str, scan_id: str) -> list[dict]:
+    """Probe common ports using socket when nmap CLI is absent."""
+    findings = []
+    host = ip_range.split("/")[0] if "/" in ip_range else ip_range
+    common_ports = [
+        (21, "FTP", "file_read_access", "high"),
+        (22, "SSH", "ssh_access", "high"),
+        (80, "HTTP", "web_access", "medium"),
+        (443, "HTTPS", "web_access", "medium"),
+        (3306, "MySQL", "database_access", "high"),
+        (5432, "PostgreSQL", "full_database_access", "critical"),
+        (8080, "HTTP-Alt", "web_access", "medium"),
+    ]
+    for port, name, gives, severity in common_ports:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.5)
+        try:
+            res = s.connect_ex((host, port))
+            if res == 0:
+                findings.append({
+                    "id": new_uuid(),
+                    "layer": "network",
+                    "severity": severity,
+                    "title": f"Open Port {port} ({name})",
+                    "description": f"Port {port} ({name}) is open and accessible on {host}.",
+                    "cve_id": None,
+                    "gives": gives,
+                    "requires": "internal_network_access",
+                    "raw_output": {"port": port, "service": name, "state": "open"},
+                })
+        except Exception:
+            pass
+        finally:
+            s.close()
+    insert_findings(findings, scan_id)
+    return findings
+
+
 def scan_network(ip_range: str, scan_id: str) -> list[dict]:
     """
     Scan a network target using python-nmap with service/version detection.
     Hard timeout: 60 seconds. Raises on scanner failure.
     """
     validate_target(ip_range, "subnet" if "/" in ip_range else "ip")
+    try:
+        scanner_command("nmap")
+    except RuntimeError:
+        return _scan_network_native(ip_range, scan_id)
+
     try:
         import nmap
         nm = nmap.PortScanner(nmap_search_path=tuple(scanner_command("nmap")))
@@ -432,8 +477,61 @@ def _consolidate_secret_findings(raw_findings: list[dict], max_findings: int = 2
 
 
 # ══════════════════════════════════════════════════════════════
-# TOOL: scan_secrets
-# ══════════════════════════════════════════════════════════════
+def _scan_secrets_native(github_url: str, scan_id: str) -> list[dict]:
+    """Scan cloned repo files using regex signatures when trufflehog CLI is absent."""
+    findings = []
+    clone_dir = None
+    try:
+        TEMPCLONES_DIR.mkdir(parents=True, exist_ok=True)
+        clone_dir = TEMPCLONES_DIR / f"secrets_{new_uuid()[:8]}"
+        subprocess.run(
+            ["git", "clone", "--depth", "1", github_url, str(clone_dir)],
+            capture_output=True, timeout=120, check=True
+        )
+
+        patterns = [
+            (re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"), "Exposed Cryptographic Private Key", "critical"),
+            (re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}"), "Leaked AWS Access Key ID", "critical"),
+            (re.compile(r"ghp_[0-9a-zA-Z]{36}"), "Exposed GitHub Personal Access Token", "critical"),
+            (re.compile(r"sk-[a-zA-Z0-9]{48}"), "Exposed OpenAI Secret API Key", "critical"),
+        ]
+
+        for path in clone_dir.rglob("*"):
+            if not path.is_file() or path.suffix in (".png", ".jpg", ".zip", ".tar", ".gz", ".lock"):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8", errors="ignore")
+                for regex, title, severity in patterns:
+                    match = regex.search(content)
+                    if match:
+                        raw = match.group(0)
+                        redacted = raw[:4] + "****" + raw[-4:] if len(raw) > 8 else "****"
+                        rel_path = path.relative_to(clone_dir).as_posix()
+                        findings.append({
+                            "id": new_uuid(),
+                            "layer": "code",
+                            "severity": severity,
+                            "title": title,
+                            "description": f"{title} discovered in repository file `{rel_path}`.",
+                            "cve_id": None,
+                            "gives": "cloud_access, lateral_movement",
+                            "requires": "code_read_access",
+                            "raw_output": {"file": rel_path, "redacted_value": redacted},
+                        })
+                        break
+            except Exception:
+                continue
+
+        consolidated = _consolidate_secret_findings(findings, max_findings=2)
+        insert_findings(consolidated, scan_id)
+        return consolidated
+    except Exception as e:
+        logger.error(f"Native secret scan failed: {e}")
+        return []
+    finally:
+        if clone_dir:
+            shutil.rmtree(clone_dir, ignore_errors=True)
+
 
 def scan_secrets(github_url: str, scan_id: str) -> list[dict]:
     """
@@ -441,6 +539,11 @@ def scan_secrets(github_url: str, scan_id: str) -> list[dict]:
     Redacts secret values to first 4 + last 4 characters.
     """
     validate_target(github_url, "github")
+    try:
+        scanner_command("trufflehog")
+    except RuntimeError:
+        return _scan_secrets_native(github_url, scan_id)
+
     try:
         TEMPCLONES_DIR.mkdir(parents=True, exist_ok=True)
         clone_dir = TEMPCLONES_DIR / f"secrets_{new_uuid()[:8]}"
@@ -494,8 +597,86 @@ def scan_secrets(github_url: str, scan_id: str) -> list[dict]:
 
 
 # ══════════════════════════════════════════════════════════════
-# TOOL: scan_web
-# ══════════════════════════════════════════════════════════════
+def _scan_web_native(url: str, scan_id: str) -> list[dict]:
+    """Inspect HTTP security headers, cookies, and banner when nikto is absent."""
+    findings = []
+    try:
+        req_url = url if url.startswith(("http://", "https://")) else f"https://{url}"
+        res = httpx.get(req_url, timeout=15, follow_redirects=True, verify=False)
+        headers = {k.lower(): v for k, v in res.headers.items()}
+
+        if "content-security-policy" not in headers:
+            findings.append({
+                "id": new_uuid(),
+                "layer": "web",
+                "severity": "medium",
+                "title": "Missing Content-Security-Policy (CSP) Header",
+                "description": f"The web application at {url} does not declare a Content-Security-Policy header, increasing risk of Cross-Site Scripting (XSS).",
+                "cve_id": None,
+                "gives": "client_script_execution, session_hijack",
+                "requires": "internet_access",
+                "raw_output": {"header": "Content-Security-Policy", "status": "missing"},
+            })
+
+        if "strict-transport-security" not in headers and req_url.startswith("https"):
+            findings.append({
+                "id": new_uuid(),
+                "layer": "web",
+                "severity": "low",
+                "title": "Missing Strict-Transport-Security (HSTS) Header",
+                "description": f"HTTPS is active but HTTP Strict Transport Security is not enforced on {url}.",
+                "cve_id": None,
+                "gives": "man_in_the_middle_access",
+                "requires": "network_interception",
+                "raw_output": {"header": "Strict-Transport-Security", "status": "missing"},
+            })
+
+        if "x-content-type-options" not in headers:
+            findings.append({
+                "id": new_uuid(),
+                "layer": "web",
+                "severity": "low",
+                "title": "Missing X-Content-Type-Options Header",
+                "description": f"MIME type sniffing is not explicitly disabled with 'nosniff' on {url}.",
+                "cve_id": None,
+                "gives": "information_disclosure",
+                "requires": "internet_access",
+                "raw_output": {"header": "X-Content-Type-Options", "status": "missing"},
+            })
+
+        if "x-frame-options" not in headers and "content-security-policy" not in headers:
+            findings.append({
+                "id": new_uuid(),
+                "layer": "web",
+                "severity": "low",
+                "title": "Missing Anti-Clickjacking Header (X-Frame-Options)",
+                "description": f"The page does not declare X-Frame-Options or CSP frame-ancestors, enabling iframe framing.",
+                "cve_id": None,
+                "gives": "ui_redirection",
+                "requires": "internet_access",
+                "raw_output": {"header": "X-Frame-Options", "status": "missing"},
+            })
+
+        server = headers.get("server") or headers.get("x-powered-by")
+        if server:
+            findings.append({
+                "id": new_uuid(),
+                "layer": "web",
+                "severity": "low",
+                "title": f"Server Banner Information Leakage ({server})",
+                "description": f"The web server reveals its identity ({server}) in response headers.",
+                "cve_id": None,
+                "gives": "fingerprinting_data",
+                "requires": "internet_access",
+                "raw_output": {"server": server},
+            })
+
+        insert_findings(findings, scan_id)
+        return findings
+    except Exception as e:
+        logger.error(f"Native web scan error: {e}")
+        return []
+
 
 def scan_web(url: str, scan_id: str, *, plugins: str | None = None) -> list[dict]:
     """
@@ -503,6 +684,11 @@ def scan_web(url: str, scan_id: str, *, plugins: str | None = None) -> list[dict
     Raises on scanner failure.
     """
     validate_target(url, "url")
+    try:
+        scanner_command("nikto")
+    except RuntimeError:
+        return _scan_web_native(url, scan_id)
+
     active_plugins = plugins or "headers;cookies;options;robots"
     try:
         with tempfile.TemporaryDirectory(prefix="fusionx-nikto-") as directory:
