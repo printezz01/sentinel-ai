@@ -41,7 +41,7 @@ python-nmap==0.7.1
 networkx==3.4.2
 
 # Embeddings
-voyageai==0.3.2
+voyageai>=0.3.2
 openai==1.58.1
 
 # PDF generation
