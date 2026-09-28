@@ -75,7 +75,10 @@ ALLOWED_GITHUB_REPOS: list[str] = [
 ]
 
 # ─── CORS Origins ────────────────────────────────────────────
+ADDITIONAL_CORS: list[str] = [x.strip() for x in os.getenv("CORS_ORIGINS", "").split(",") if x.strip()]
 CORS_ORIGINS: list[str] = [
     "http://localhost:5173",
     "http://localhost:3000",
+    "http://localhost:8000",
+    *ADDITIONAL_CORS,
 ]
