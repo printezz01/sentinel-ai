@@ -367,3 +367,13 @@ async def run_agent(scan_id: str, target: str, target_type: str) -> None:
     else:
         logger.info("⚪ No API keys found — running in DEMO MODE (fixture data)")
         await _run_demo_mode(scan_id, target, target_type)
+
+    # Fallback: If the selected LLM mode failed immediately (e.g., Groq 429 Rate Limit)
+    # and no findings were gathered, automatically fall back to Demo Mode.
+    from app.db import get_scan_session, get_findings
+    session = get_scan_session(scan_id)
+    if session and session.get("status") == "failed":
+        findings = get_findings(scan_id)
+        if len(findings) == 0 and mode != "demo":
+            logger.warning(f"⚠️ {mode.upper()} mode failed with 0 findings. Falling back to DEMO MODE.")
+            await _run_demo_mode(scan_id, target, target_type)

@@ -221,7 +221,7 @@ def generate_pdf(scan_id: str, target: str, scan_session: dict = None) -> bytes:
     # PAGE 1 — COVER
     # ═══════════════════════════════════════════════════════════
     elems += [Spacer(1, 50)]
-    elems += [Paragraph("SENTINEL AI", S("ct", fontSize=38, fontName="Helvetica-Bold", textColor=C_DARK))]
+    elems += [Paragraph("SENTINEL AI", S("ct", fontSize=38, fontName="Helvetica-Bold", textColor=C_DARK, leading=44))]
     elems += [Paragraph("Autonomous Security Intelligence Report",
                          S("cs", fontSize=14, textColor=C_ACCENT, spaceAfter=20))]
     elems += [HRFlowable(width="100%", thickness=3, color=C_ACCENT, spaceAfter=22)]
@@ -250,10 +250,10 @@ def generate_pdf(scan_id: str, target: str, scan_session: dict = None) -> bytes:
     score_hex = bcolor.hexval()
     rb = Table([[
         Paragraph(f'<font size="46" color="{score_hex}"><b>{score}</b></font>', sCenter),
-        Table([[
-            Paragraph(f'<font size="16" color="{score_hex}"><b>{band}</b></font>', sCenter),
-            Paragraph('<font size="8" color="#94A3B8">Score /100 — Lower = More Risk</font>', sCenter),
-        ]], colWidths=[170])
+        Table([
+            [Paragraph(f'<font size="16" color="{score_hex}"><b>{band}</b></font>', sCenter)],
+            [Paragraph('<font size="8" color="#94A3B8">Score /100 — Lower = More Risk</font>', sCenter)],
+        ], colWidths=[170])
     ]], colWidths=[90, 170])
     rb.setStyle(TableStyle([
         ("BACKGROUND",(0,0),(-1,-1), C_LIGHT),

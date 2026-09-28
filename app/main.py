@@ -24,6 +24,7 @@ from app.engine import (
 )
 from app.reporting import generate_pdf
 from app.agent import run_agent
+from app.scheduler import start_scheduler, stop_scheduler, add_subscription, remove_subscription, list_subscriptions
 
 # ─── Logging ──────────────────────────────────────────────────
 logging.basicConfig(
@@ -46,6 +47,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Start the APScheduler on app startup."""
+    start_scheduler()
+    logger.info("Sentinel AI started. Scheduler active.")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Gracefully stop the scheduler."""
+    stop_scheduler()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -363,3 +377,55 @@ async def scan_report(scan_id: str):
             "Content-Disposition": f'attachment; filename="sentinel_report_{scan_id}.pdf"',
         },
     )
+
+
+# ══════════════════════════════════════════════════════════════
+# Subscription & Scheduled Scan Endpoints
+# ══════════════════════════════════════════════════════════════
+
+class SubscribeRequest(BaseModel):
+    target: str
+    target_type: str   # ip | subnet | url | github
+    email: str = "printezz01@gmail.com"
+    interval_minutes: int = 5
+
+
+@app.post("/subscribe")
+async def subscribe(req: SubscribeRequest):
+    """
+    Register a target for automated periodic scanning.
+    The AI agent will scan the target every `interval_minutes` minutes
+    and email a full PDF report to the specified email address.
+    """
+    validate_target(req.target, req.target_type)
+    sub_id = new_uuid()
+
+    add_subscription(
+        sub_id=sub_id,
+        target=req.target,
+        target_type=req.target_type,
+        email=req.email,
+        interval_minutes=req.interval_minutes,
+    )
+
+    logger.info(f"New subscription {sub_id} registered for {req.target} → {req.email}")
+    return {
+        "sub_id": sub_id,
+        "message": f"Subscribed! Scanning '{req.target}' every {req.interval_minutes} minutes. Reports will be emailed to {req.email}.",
+        "target": req.target,
+        "email": req.email,
+        "interval_minutes": req.interval_minutes,
+    }
+
+
+@app.delete("/subscribe/{sub_id}")
+async def unsubscribe(sub_id: str):
+    """Cancel a scheduled scan subscription."""
+    remove_subscription(sub_id)
+    return {"message": f"Subscription {sub_id} cancelled."}
+
+
+@app.get("/subscriptions")
+async def get_subscriptions():
+    """List all active scan subscriptions."""
+    return {"subscriptions": list_subscriptions()}

@@ -22,8 +22,13 @@ NVD_API_KEY: str = os.getenv("NVD_API_KEY", "")
 SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
 
+# ─── Email / SMTP (Gmail) ─────────────────────────────────────
+SMTP_USER: str = os.getenv("SMTP_USER", "")          # Your Gmail address
+SMTP_PASS: str = os.getenv("SMTP_PASS", "")          # Gmail App Password (16 chars)
+REPORT_EMAIL: str = os.getenv("REPORT_EMAIL", "printezz01@gmail.com")  # Where to send reports
+
 # ─── LLM Models ──────────────────────────────────────────────
-GROQ_MODEL: str = "llama-3.3-70b-versatile"    # FREE via Groq
+GROQ_MODEL: str = "llama-3.1-70b-versatile"    # FREE via Groq
 GEMINI_MODEL: str = "gemini-2.0-flash"          # FREE via Google
 CLAUDE_PRIMARY_MODEL: str = "claude-sonnet-4-5"  # Paid
 CLAUDE_FALLBACK_MODEL: str = "claude-3-5-sonnet-latest"  # Paid fallback

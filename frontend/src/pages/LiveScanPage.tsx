@@ -48,7 +48,7 @@ export default function LiveScanPage() {
     queryFn: () => getScanStatus(id!),
     refetchInterval: (query) => {
       const s = query.state.data?.status;
-      if (s === 'completed' || s === 'failed') return false;
+      if (s === 'complete' || s === 'completed' || s === 'failed') return false;
       return 1500;
     },
     retry: 1,
@@ -68,7 +68,7 @@ export default function LiveScanPage() {
 
   // Stop the timer when scan completes or fails
   useEffect(() => {
-    if (status?.status === 'completed' || status?.status === 'failed') {
+    if (status?.status === 'complete' || status?.status === 'completed' || status?.status === 'failed') {
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
@@ -76,21 +76,16 @@ export default function LiveScanPage() {
     }
   }, [status?.status]);
 
-  // Track new findings
+  // Track findings
   useEffect(() => {
-    if (!status?.findings_so_far) return;
-    const newFindings = status.findings_so_far.filter(
-      (f) => !seenIds.has(f.id)
-    );
-    if (newFindings.length > 0) {
-      setSeenIds((prev) => {
-        const next = new Set(prev);
-        newFindings.forEach((f) => next.add(f.id));
-        return next;
-      });
-      setLogEntries((prev) => [...prev, ...newFindings]);
+    if (status?.findings_so_far) {
+      // Guarantee unique entries by ID
+      const uniqueFindings = Array.from(
+        new Map(status.findings_so_far.map((f: any) => [f.id, f])).values()
+      ) as Finding[];
+      setLogEntries(uniqueFindings);
     }
-  }, [status?.findings_so_far, seenIds]);
+  }, [status?.findings_so_far]);
 
   // Auto-scroll terminal
   useEffect(() => {
@@ -107,16 +102,10 @@ export default function LiveScanPage() {
   }, [status?.status]);
 
 
-  const isComplete = status?.status === 'completed';
+  const isComplete = status?.status === 'complete' || status?.status === 'completed';
   const isFailed = status?.status === 'failed';
 
-  useEffect(() => {
-    if (isComplete || isFailed) return;
-    const interval = setInterval(() => {
-      setElapsedSeconds(Math.floor((Date.now() - startTime.current) / 1000));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [isComplete, isFailed]);
+
 
   const elapsed = status?.elapsed_seconds ?? elapsedSeconds;
   const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
