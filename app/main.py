@@ -239,6 +239,19 @@ def scan_chain(scan_id: str):
     return get_chain_graph(scan_id)
 
 
+@app.get("/scan/{scan_id}/history")
+def scan_history(scan_id: str):
+    """
+    Get the historical scan context for the target of this scan.
+    Returns comparison between the latest and previous scan.
+    """
+    from app.history import get_scan_history_for_session
+    result = get_scan_history_for_session(scan_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
 @app.post("/scan/{scan_id}/chat")
 def scan_chat(scan_id: str, req: ChatRequest):
     """

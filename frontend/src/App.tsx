@@ -13,6 +13,7 @@ import HomePage from './pages/HomePage';
 import LiveScanPage from './pages/LiveScanPage';
 import DashboardPage from './pages/DashboardPage';
 import ChatPage from './pages/ChatPage';
+import ScanHistoryPage from './pages/ScanHistoryPage';
 
 // Lazy-load Cytoscape route for performance
 const ChainPage = lazy(() => import('./pages/ChainPage'));
@@ -50,6 +51,7 @@ export default function App() {
             <Route path="/scan/:id/live" element={<LiveScanPage />} />
             <Route path="/scan/:id/dashboard" element={<DashboardPage />} />
             <Route path="/scan/:id/chain" element={<ChainPageWrapper />} />
+            <Route path="/scan/:id/history" element={<ScanHistoryPage />} />
             <Route path="/scan/:id/chat" element={<ChatPage />} />
           </Route>
         </Routes>

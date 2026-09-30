@@ -6,6 +6,7 @@
 import type {
   ScanRequest, ScanResponse, ScanStatusResponse,
   DashboardResponse, ChainResponse, ChatResponse,
+  ScanHistoryResponse
 } from '../types/api';
 import {
   getMockScanStatus, getMockDashboard, getMockChain,
@@ -98,6 +99,33 @@ export async function getChain(scanId: string): Promise<ChainResponse> {
     return getMockChain();
   }
   return apiFetch<ChainResponse>(`/scan/${scanId}/chain`);
+}
+
+export async function getScanHistory(scanId: string): Promise<ScanHistoryResponse> {
+  if (USE_MOCKS) {
+    // Return a dummy history for mock mode
+    return {
+      target: "mock-target.example.com",
+      history_available: true,
+      comparison: {
+        summary: "Security posture improved",
+        path_summary: "Attack path eliminated",
+        counts: { new: 0, resolved: 3, unchanged: 2 }
+      },
+      latest_scan: {
+        id: scanId, created_at: new Date().toISOString(),
+        total_findings: 2, critical_findings: 0, attack_paths: 0, risk_score: 18
+      },
+      previous_scan: {
+        id: "prev-mock-id", created_at: new Date(Date.now() - 86400000).toISOString(),
+        total_findings: 5, critical_findings: 1, attack_paths: 1, risk_score: 54
+      },
+      older_scans: [
+        { id: "old-1", created_at: new Date(Date.now() - 86400000*2).toISOString(), total_findings: 7 }
+      ]
+    };
+  }
+  return apiFetch<ScanHistoryResponse>(`/scan/${scanId}/history`);
 }
 
 export async function sendChat(

@@ -297,3 +297,65 @@ def get_owasp_mappings(scan_id: str) -> list[dict]:
     for f in findings:
         result.extend(_mem_owasp_mappings.get(f["id"], []))
     return result
+
+
+# ══════════════════════════════════════════════════════════════
+# Scan History
+# ══════════════════════════════════════════════════════════════
+
+def get_all_scan_sessions() -> list[dict]:
+    """Return all completed scan sessions, newest first."""
+    if USE_SUPABASE:
+        try:
+            sb = get_supabase()
+            result = (
+                sb.table("scan_sessions")
+                .select("id, target, target_type, status, created_at, completed_at")
+                .eq("status", "complete")
+                .order("created_at", desc=True)
+                .execute()
+            )
+            return result.data or []
+        except Exception as e:
+            logger.error(f"Supabase get_all_scan_sessions failed: {e}")
+    # In-memory fallback
+    sessions = [
+        {k: v for k, v in s.items() if k in ("id", "target", "target_type", "status", "created_at", "completed_at")}
+        for s in _mem_sessions.values()
+        if s.get("status") == "complete"
+    ]
+    sessions.sort(key=lambda s: s.get("created_at") or "", reverse=True)
+    return sessions
+
+
+def get_scan_sessions_by_target(target: str) -> list[dict]:
+    """Return all completed scans for a given normalized target, newest first."""
+    if USE_SUPABASE:
+        try:
+            sb = get_supabase()
+            result = (
+                sb.table("scan_sessions")
+                .select("id, target, target_type, status, created_at, completed_at")
+                .eq("target", target)
+                .eq("status", "complete")
+                .order("created_at", desc=True)
+                .execute()
+            )
+            return result.data or []
+        except Exception as e:
+            logger.error(f"Supabase get_scan_sessions_by_target failed: {e}")
+    # In-memory fallback
+    sessions = [
+        {k: v for k, v in s.items() if k in ("id", "target", "target_type", "status", "created_at", "completed_at")}
+        for s in _mem_sessions.values()
+        if s.get("status") == "complete" and s.get("target") == target
+    ]
+    sessions.sort(key=lambda s: s.get("created_at") or "", reverse=True)
+    return sessions
+
+
+def get_chain_edge_count(scan_id: str) -> int:
+    """Return the number of attack-chain edges for a scan (quick count)."""
+    edges = get_chain_edges(scan_id)
+    return len(edges)
+

@@ -122,3 +122,30 @@ export interface ChatMessage {
   sources?: Finding[];
   timestamp: Date;
 }
+
+export interface ScanSummary {
+  id: string;
+  created_at: string | null;
+  total_findings: number;
+  critical_findings: number;
+  attack_paths: number;
+  risk_score: number;
+}
+
+export interface ScanHistoryResponse {
+  target: string;
+  history_available: boolean;
+  message?: string;
+  comparison?: {
+    summary: string;
+    path_summary: string;
+    counts: {
+      new: number;
+      resolved: number;
+      unchanged: number;
+    };
+  };
+  latest_scan: ScanSummary;
+  previous_scan?: ScanSummary;
+  older_scans?: Pick<ScanSummary, 'id' | 'created_at' | 'total_findings'>[];
+}

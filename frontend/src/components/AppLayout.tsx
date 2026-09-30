@@ -8,9 +8,10 @@ import { Outlet, NavLink, useParams, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Scan, GitBranch, Bell,
   ChevronLeft, ChevronRight, Download, Search,
-  ArrowRight,
+  ArrowRight, History,
 } from 'lucide-react';
-import { downloadReport, checkBackendHealth } from '../api/client';
+import { downloadReport, checkBackendHealth, getScanHistory } from '../api/client';
+import { useQuery } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 
 export default function AppLayout() {
@@ -24,9 +25,17 @@ export default function AppLayout() {
     checkBackendHealth().then(setBackendOnline);
   }, []);
 
-
   const hasScan = !!id;
   const isHome = location.pathname === '/';
+
+  const { data: historyData } = useQuery({
+    queryKey: ['scanHistoryCheck', id],
+    queryFn: () => getScanHistory(id!),
+    enabled: hasScan,
+    staleTime: 60000,
+  });
+
+  const showHistory = hasScan && historyData?.history_available;
 
   const handleDownloadPdf = async () => {
     if (!id) return;
@@ -86,6 +95,19 @@ export default function AppLayout() {
               {!collapsed && <span>{item.label}</span>}
             </NavLink>
           ))}
+
+          {showHistory && (
+            <NavLink
+              to={`/scan/${id}/history`}
+              className={({ isActive }) =>
+                `sidebar-item ${isActive ? 'active' : ''}`
+              }
+              title={collapsed ? 'Scan History' : undefined}
+            >
+              <History size={18} />
+              {!collapsed && <span>Scan History</span>}
+            </NavLink>
+          )}
 
           {hasScan && (
             <NavLink
