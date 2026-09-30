@@ -274,6 +274,22 @@ def _scan_code_native(clone_dir: Path) -> list[dict]:
         ("debug-enabled", re.compile(r"(?:DEBUG\s*=\s*True|debug\s*=\s*True|app\.debug\s*=\s*True)"), "Debug Mode Enabled in Production", "medium", "information_disclosure", "internet_access", "Debug mode exposes stack traces, environment variables, and internal application state to attackers."),
         # ── Hardcoded Passwords ──
         ("hardcoded-password", re.compile(r"(?:password|passwd|pwd|secret)\s*=\s*['\"][^'\"]{4,}['\"]", re.IGNORECASE), "Hardcoded Password in Source Code", "critical", "database_credentials, server_access", "code_read_access", "Plaintext password hardcoded in source code exposes credentials to anyone with repository access."),
+        # ── NoSQL Injection ──
+        ("nosql-injection", re.compile(r"(?:find|findOne|findOneAnd|update|delete|remove|aggregate)\s*\([^)]*(?:req\.body|req\.query|req\.params|\$where|\$gt|\$ne|\$regex)"), "NoSQL Injection", "critical", "database_credentials, app_data_write", "web_access", "MongoDB query constructed with unsanitized user input allows NoSQL operator injection to bypass authentication or extract data."),
+        ("nosql-operator", re.compile(r"\{\s*['\"]?\$(?:gt|ne|lt|gte|lte|in|nin|regex|where|or|and|not|exists)['\"]?\s*:"), "NoSQL Operator Injection Pattern", "high", "database_credentials, authentication_bypass", "web_access", "MongoDB query operators used in a context that may accept user-controlled input, enabling query manipulation."),
+        # ── SSRF (Server-Side Request Forgery) ──
+        ("ssrf-node", re.compile(r"(?:https?\.get|https?\.request|axios|fetch|request|got|node-fetch)\s*\([^)]*(?:req\.query|req\.body|req\.params|user|input|url)"), "Server-Side Request Forgery (SSRF)", "critical", "server_access, lateral_movement", "web_access", "Server-side HTTP request constructed with user-controlled URL enables SSRF attacks against internal services."),
+        ("ssrf-python", re.compile(r"(?:requests\.get|requests\.post|urllib\.request\.urlopen|urlopen|httpx)\s*\([^)]*(?:request\.|user|input|url)"), "Server-Side Request Forgery (SSRF)", "critical", "server_access, lateral_movement", "web_access", "Server-side HTTP request with user-controlled URL allows attackers to reach internal network resources."),
+        # ── XSS via Template Engines (Swig, Handlebars, EJS) ──
+        ("xss-swig-unescaped", re.compile(r"autoescape\s*:\s*false|autoescape\s*=\s*false"), "Cross-Site Scripting via Disabled Autoescaping", "high", "session_hijacking, credential_theft", "web_access", "Template engine autoescaping is explicitly disabled, allowing stored or reflected XSS through rendered user data."),
+        ("xss-handlebars-triple", re.compile(r"\{\{\{[^}]+\}\}\}"), "Cross-Site Scripting via Unescaped Template Output", "high", "session_hijacking, credential_theft", "web_access", "Triple-brace Handlebars syntax renders raw HTML without escaping, enabling XSS if user data is interpolated."),
+        ("xss-ejs-unescaped", re.compile(r"<%-\s*\w+"), "Cross-Site Scripting via EJS Unescaped Output", "high", "session_hijacking, credential_theft", "web_access", "EJS unescaped output tag (<%- ) renders raw HTML, enabling XSS when user-controlled data is rendered."),
+        # ── Regex DoS (ReDoS) ──
+        ("redos", re.compile(r"new\s+RegExp\s*\([^)]*(?:req\.|user|input)|RegExp\s*\([^)]*\+"), "Regular Expression Denial of Service (ReDoS)", "medium", "denial_of_service", "web_access", "Dynamically constructed regular expression with user input can cause catastrophic backtracking and denial of service."),
+        # ── Hardcoded Connection Strings ──
+        ("connection-string", re.compile(r"(?:mongodb(?:\+srv)?|postgres|mysql|redis|amqp)://[^\s'\"]{10,}"), "Hardcoded Database Connection String", "critical", "database_credentials, server_access", "code_read_access", "Database connection string with embedded credentials exposed in source code."),
+        # ── Missing Security Headers ──
+        ("missing-helmet", re.compile(r"app\.(?:disable|set)\s*\(\s*['\"]x-powered-by['\"]"), "Information Disclosure via Server Header", "low", "information_disclosure", "internet_access", "Server technology disclosed via x-powered-by header aids attacker reconnaissance."),
     ]
     for file_path in clone_dir.rglob("*"):
         if not file_path.is_file() or file_path.suffix in (".png", ".jpg", ".jpeg", ".svg", ".ico", ".lock", ".json", ".min.js"):
@@ -431,7 +447,7 @@ def scan_code(github_url: str, scan_id: str) -> list[dict]:
         # Cleanup
         shutil.rmtree(clone_dir, ignore_errors=True)
 
-        consolidated = _consolidate_code_findings(findings, max_findings=15)
+        consolidated = _consolidate_code_findings(findings, max_findings=20)
         insert_findings(consolidated, scan_id)
         return consolidated
     except Exception as e:
@@ -466,8 +482,16 @@ def _clean_code_finding_title(check_id: str) -> str:
     # ── New pattern title mappings ──
     if "command-injection" in low or "shell-execution" in low:
         return "OS Command Injection"
-    if "xss" in low or "innerhtml" in low or "document-write" in low:
+    if "xss" in low or "innerhtml" in low or "document-write" in low or "handlebars" in low or "swig" in low or "ejs" in low:
         return "Cross-Site Scripting (XSS)"
+    if "ssrf" in low:
+        return "Server-Side Request Forgery (SSRF)"
+    if "redos" in low:
+        return "Regular Expression Denial of Service (ReDoS)"
+    if "connection-string" in low:
+        return "Hardcoded Database Connection String"
+    if "missing-helmet" in low or "x-powered-by" in low:
+        return "Information Disclosure via Server Header"
     if "weak-hash-md5" in low:
         return "Weak Cryptographic Hash (MD5)"
     if "weak-hash-sha1" in low:
