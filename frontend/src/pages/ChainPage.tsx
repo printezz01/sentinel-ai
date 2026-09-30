@@ -8,7 +8,10 @@ import { useEffect, useRef, useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import cytoscape from 'cytoscape';
+import dagre from 'cytoscape-dagre';
 import { getChain } from '../api/client';
+
+cytoscape.use(dagre);
 import type { Severity, ChainResponse, ChainEdge } from '../types/api';
 import { X, ZoomIn, ZoomOut, Maximize2, Shield, Code, Terminal, Globe, Database, Lock, Bug, Eye, Server, Key, FileWarning, Hash } from 'lucide-react';
 
@@ -294,25 +297,25 @@ export default function ChainPage() {
             label: 'data(shortLabel)',
             'text-valign': 'bottom',
             'text-halign': 'center',
-            'font-size': '10px',
+            'font-size': '11px',
             'font-family': 'Inter, sans-serif',
-            'font-weight': 600,
-            color: '#3a3e34',
-            'text-margin-y': 8,
-            'text-max-width': '90px',
+            'font-weight': 700,
+            color: '#2a2e24',
+            'text-margin-y': 10,
+            'text-max-width': '120px',
             'text-wrap': 'wrap',
             'background-color': function (ele: cytoscape.NodeSingular) {
               const sev = ele.data('severity') as Severity;
-              return ele.data('inPrimaryPath') ? SEV_COLORS[sev] || '#8a8e7c' : '#c8c4b8';
+              return ele.data('inPrimaryPath') ? SEV_COLORS[sev] || '#8a8e7c' : '#d8d4c8';
             },
             width: function (ele: cytoscape.NodeSingular) {
-              return ele.data('inPrimaryPath') ? 44 : 32;
+              return ele.data('inPrimaryPath') ? 48 : 36;
             },
             height: function (ele: cytoscape.NodeSingular) {
-              return ele.data('inPrimaryPath') ? 44 : 32;
+              return ele.data('inPrimaryPath') ? 48 : 36;
             },
             'border-width': function (ele: cytoscape.NodeSingular) {
-              return ele.data('inPrimaryPath') ? 3 : 1;
+              return ele.data('inPrimaryPath') ? 4 : 2;
             },
             'border-color': function (ele: cytoscape.NodeSingular) {
               return ele.data('inPrimaryPath') ? '#c75050' : '#b0ad9f';
@@ -328,38 +331,38 @@ export default function ChainPage() {
         {
           selector: 'edge[isPrimary]',
           style: {
-            width: 3,
+            width: 3.5,
             'line-color': '#c75050',
             'target-arrow-color': '#c75050',
             'target-arrow-shape': 'triangle',
-            'arrow-scale': 0.8,
-            'curve-style': 'straight',
+            'arrow-scale': 1.2,
+            'curve-style': 'bezier',
             'overlay-opacity': 0,
           } as cytoscape.Css.Edge,
         },
         {
           selector: 'edge[!isPrimary]',
           style: {
-            width: 1,
-            'line-color': 'rgba(160,160,148,0.3)',
-            'target-arrow-color': 'rgba(160,160,148,0.4)',
+            width: 1.5,
+            'line-color': 'rgba(160,160,148,0.5)',
+            'target-arrow-color': 'rgba(160,160,148,0.6)',
             'target-arrow-shape': 'triangle',
-            'arrow-scale': 0.5,
-            'curve-style': 'straight',
+            'arrow-scale': 0.8,
+            'curve-style': 'bezier',
             'overlay-opacity': 0,
           } as cytoscape.Css.Edge,
         },
       ],
       layout: {
-        name: 'breadthfirst',
-        directed: true,
-        spacingFactor: 1.8,
+        name: 'dagre',
+        rankDir: 'LR',
+        nodeSep: 60,
+        edgeSep: 40,
+        rankSep: 140,
         padding: 60,
-        avoidOverlap: true,
-        nodeDimensionsIncludeLabels: true,
         animate: true,
         animationDuration: 600,
-      },
+      } as any,
       minZoom: 0.2,
       maxZoom: 3,
       wheelSensitivity: 0.25,
