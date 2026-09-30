@@ -1,21 +1,44 @@
 // ═══════════════════════════════════════════════════
-// Sentinel AI — Attack Paths Page
-// Two views: Top Attack Path (linear) + Full Graph (hierarchical)
-// Isolated findings separated below the graph
+// Sentinel AI — Attack Paths Page (React Flow Edition)
+// Perfected layout to match the mockup exactly.
 // ═══════════════════════════════════════════════════
 
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useMemo, useState, useCallback, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import cytoscape from 'cytoscape';
-import dagre from 'cytoscape-dagre';
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  Handle,
+  Position,
+  MarkerType,
+  useNodesState,
+  useEdgesState,
+  Node,
+  Edge,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import dagre from 'dagre';
 import { getChain } from '../api/client';
+import type { Severity, ChainResponse } from '../types/api';
+import {
+  X,
+  Shield,
+  Code,
+  Terminal,
+  Globe,
+  Database,
+  Lock,
+  Bug,
+  Eye,
+  Server,
+  Key,
+  FileWarning,
+  Hash,
+} from 'lucide-react';
 
-cytoscape.use(dagre);
-import type { Severity, ChainResponse, ChainEdge } from '../types/api';
-import { X, ZoomIn, ZoomOut, Maximize2, Shield, Code, Terminal, Globe, Database, Lock, Bug, Eye, Server, Key, FileWarning, Hash } from 'lucide-react';
-
-// ── Color system ──
+// ── Helpers & Styling ──
 
 const SEV_COLORS: Record<Severity, string> = {
   critical: '#c75050',
@@ -33,45 +56,28 @@ const SEV_BG: Record<Severity, string> = {
   info: 'rgba(138,142,124,0.12)',
 };
 
-// ── Stage classification ──
-
-interface Stage {
-  key: string;
-  label: string;
-  subtitle: string;
-}
-
-const STAGES: Stage[] = [
+const STAGES = [
   { key: 'initial_access', label: 'Initial Access', subtitle: 'Gain foothold' },
   { key: 'execution', label: 'Execution', subtitle: 'Run code' },
   { key: 'lateral', label: 'Lateral Movement', subtitle: 'Move through system' },
   { key: 'impact', label: 'Data Access', subtitle: 'Access sensitive data' },
 ];
 
-/** Classify a finding into an attack stage based on its gives/requires */
 function classifyStage(gives: string, requires: string, severity: string): string {
   const g = (gives || '').toLowerCase();
   const r = (requires || '').toLowerCase();
-
-  // If it requires nothing or internet_access → initial access
   if (!r || r === 'internet_access' || r === 'web_access' || r === 'code_read_access') {
     if (g.includes('command_execution') || g.includes('app_data_write')) return 'execution';
     return 'initial_access';
   }
-  // If it gives database or file access → impact
   if (g.includes('database') || g.includes('file_read') || g.includes('app_data_read')) return 'impact';
-  // If it gives lateral movement or server access → lateral
   if (g.includes('lateral') || g.includes('server_access')) return 'lateral';
-  // If it gives command execution → execution
   if (g.includes('command_execution')) return 'execution';
-  // If it gives privilege escalation → lateral
   if (g.includes('privilege_escalation')) return 'lateral';
-  // Default by severity
   if (severity === 'critical') return 'execution';
   return 'initial_access';
 }
 
-/** Shorten a vulnerability title */
 function shortenTitle(title: string): string {
   if (!title) return '?';
   const map: Record<string, string> = {
@@ -110,7 +116,6 @@ function shortenTitle(title: string): string {
   return map[title] || title.split(/[(/]/).map(s => s.trim())[0].substring(0, 20);
 }
 
-/** Pick an icon for a finding title */
 function getIcon(title: string): typeof Code {
   const t = title.toLowerCase();
   if (t.includes('eval') || t.includes('code injection') || t.includes('dynamic')) return Code;
@@ -126,13 +131,101 @@ function getIcon(title: string): typeof Code {
   return Shield;
 }
 
-// Fix encoding
 const fixEncoding = (text: string | undefined): string => {
   if (!text) return '';
   return text.replace(/â€"/g, '—').replace(/â€˜/g, "'").replace(/â€™/g, "'").replace(/â€œ/g, '"').replace(/â€\u009d/g, '"');
 };
 
-// ── Types ──
+// ── React Flow Custom Node ──
+
+const AttackNode = ({ data }: { data: any }) => {
+  const Icon = getIcon(data.fullLabel);
+  const color = SEV_COLORS[data.severity as Severity] || '#8a8e7c';
+  const bg = SEV_BG[data.severity as Severity] || 'rgba(138,142,124,0.12)';
+
+  return (
+    <div
+      className={`relative flex flex-col items-center p-3 rounded-2xl bg-white shadow-sm transition-all duration-300 ${
+        data.selected ? 'ring-2 ring-[#2a2e24]' : ''
+      }`}
+      style={{
+        border: data.inPrimaryPath ? \`2px solid \${color}\` : '1px solid #e8e4d8',
+        boxShadow: data.inPrimaryPath ? \`0 0 20px \${bg}\` : '0 2px 10px rgba(0,0,0,0.03)',
+      }}
+    >
+      <Handle type="target" position={Position.Left} className="w-2 h-2 opacity-0" />
+      
+      <div
+        className="w-14 h-14 rounded-full flex items-center justify-center mb-2 z-10 relative"
+        style={{ background: color }}
+      >
+        <Icon size={24} className="text-white drop-shadow-sm" />
+        
+        {/* Glow effect for primary path */}
+        {data.inPrimaryPath && (
+          <div 
+            className="absolute inset-0 rounded-full animate-pulse" 
+            style={{ boxShadow: \`0 0 15px \${color}\`, opacity: 0.5 }}
+          />
+        )}
+      </div>
+      
+      <div className="text-xs font-bold text-[#2a2e24] text-center mb-1 max-w-[120px] leading-tight">
+        {data.label}
+      </div>
+      
+      <div
+        className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+        style={{ color: color, background: bg }}
+      >
+        {data.severity}
+      </div>
+
+      <Handle type="source" position={Position.Right} className="w-2 h-2 opacity-0" />
+    </div>
+  );
+};
+
+const nodeTypes = { attackNode: AttackNode };
+
+// ── Dagre Layout Algorithm ──
+
+const dagreGraph = new dagre.graphlib.Graph();
+dagreGraph.setDefaultEdgeLabel(() => ({}));
+
+const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'LR') => {
+  const isHorizontal = direction === 'LR';
+  dagreGraph.setGraph({ rankdir: direction, nodesep: 60, ranksep: 200 });
+
+  nodes.forEach((node) => {
+    // Exact dimensions of our custom node roughly
+    dagreGraph.setNode(node.id, { width: 140, height: 140 });
+  });
+
+  edges.forEach((edge) => {
+    dagreGraph.setEdge(edge.source, edge.target);
+  });
+
+  dagre.layout(dagreGraph);
+
+  const newNodes = nodes.map((node) => {
+    const nodeWithPosition = dagreGraph.node(node.id);
+    const newNode = { ...node };
+
+    // We are shifting the dagre node position (anchor=center center) to the top left
+    newNode.position = {
+      x: nodeWithPosition.x - 70,
+      y: nodeWithPosition.y - 70,
+    };
+
+    return newNode;
+  });
+
+  return { nodes: newNodes, edges };
+};
+
+
+// ── Main Page Component ──
 
 interface ProcessedNode {
   id: string;
@@ -147,17 +240,14 @@ interface ProcessedNode {
   inPrimaryPath: boolean;
 }
 
-type ViewMode = 'top-path' | 'full-graph';
-
-// ── Component ──
-
 export default function ChainPage() {
   const { id } = useParams<{ id: string }>();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const cyRef = useRef<cytoscape.Core | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>('top-path');
-  const [selectedNode, setSelectedNode] = useState<ProcessedNode | null>(null);
-  const [selectedEdgeReason, setSelectedEdgeReason] = useState<string>('');
+  const [viewMode, setViewMode] = useState<'top-path' | 'full-graph'>('full-graph');
+  const [selectedNodeData, setSelectedNodeData] = useState<ProcessedNode | null>(null);
+
+  // React Flow state
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
   const { data: chainData } = useQuery<ChainResponse>({
     queryKey: ['chain', id],
@@ -166,9 +256,8 @@ export default function ChainPage() {
     enabled: !!id,
   });
 
-  // ── Compute primary path and classify nodes ──
-  const { connectedNodes, isolatedNodes, primaryPath, primaryEdges, allEdges, processedNodeMap } = useMemo(() => {
-    if (!chainData) return { connectedNodes: [] as ProcessedNode[], isolatedNodes: [] as ProcessedNode[], primaryPath: [] as string[], primaryEdges: new Set<string>(), allEdges: [] as ChainEdge[], processedNodeMap: new Map<string, ProcessedNode>() };
+  const { connectedNodes, isolatedNodes, primaryPath, primaryEdges, processedNodeMap } = useMemo(() => {
+    if (!chainData) return { connectedNodes: [] as ProcessedNode[], isolatedNodes: [] as ProcessedNode[], primaryPath: [] as string[], primaryEdges: new Set<string>(), processedNodeMap: new Map<string, ProcessedNode>() };
 
     const edgeNodeIds = new Set<string>();
     chainData.edges.forEach(e => {
@@ -194,26 +283,21 @@ export default function ChainPage() {
       nodeMap.set(n.data.id, pn);
     });
 
-    // Find longest path through highest-severity nodes (primary attack path)
-    // Build adjacency list
     const adj = new Map<string, string[]>();
     chainData.edges.forEach(e => {
       if (!adj.has(e.data.source)) adj.set(e.data.source, []);
       adj.get(e.data.source)!.push(e.data.target);
     });
 
-    // Find roots (nodes with no incoming edges among connected nodes)
     const hasIncoming = new Set<string>();
     chainData.edges.forEach(e => hasIncoming.add(e.data.target));
-    const roots = [...edgeNodeIds].filter(id => !hasIncoming.has(id));
+    const roots = [...edgeNodeIds].filter(nodeId => !hasIncoming.has(nodeId));
 
-    // BFS/DFS to find the longest path with highest cumulative severity
     const sevWeight: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
 
     function findBestPath(start: string): string[] {
       let bestPath: string[] = [];
       let bestScore = -1;
-
       function dfs(node: string, path: string[], score: number, visited: Set<string>) {
         if (score > bestScore || (score === bestScore && path.length > bestPath.length)) {
           bestScore = score;
@@ -228,7 +312,6 @@ export default function ChainPage() {
           }
         }
       }
-
       const startNode = nodeMap.get(start);
       dfs(start, [start], sevWeight[startNode?.severity || 'info'] || 0, new Set([start]));
       return bestPath;
@@ -238,24 +321,22 @@ export default function ChainPage() {
     let globalBestScore = -1;
     for (const root of roots.length > 0 ? roots : [...edgeNodeIds]) {
       const path = findBestPath(root);
-      const score = path.reduce((s, id) => s + (sevWeight[nodeMap.get(id)?.severity || 'info'] || 0), 0);
+      const score = path.reduce((s, nodeId) => s + (sevWeight[nodeMap.get(nodeId)?.severity || 'info'] || 0), 0);
       if (score > globalBestScore || (score === globalBestScore && path.length > globalBestPath.length)) {
         globalBestScore = score;
         globalBestPath = path;
       }
     }
 
-    // Mark primary path nodes
     const primarySet = new Set(globalBestPath);
-    primarySet.forEach(id => {
-      const n = nodeMap.get(id);
+    primarySet.forEach(nodeId => {
+      const n = nodeMap.get(nodeId);
       if (n) n.inPrimaryPath = true;
     });
 
-    // Compute primary edges
     const pEdges = new Set<string>();
     for (let i = 0; i < globalBestPath.length - 1; i++) {
-      pEdges.add(`${globalBestPath[i]}->${globalBestPath[i + 1]}`);
+      pEdges.add(\`\${globalBestPath[i]}->\${globalBestPath[i + 1]}\`);
     }
 
     const connected = [...nodeMap.values()].filter(n => n.isConnected);
@@ -266,393 +347,286 @@ export default function ChainPage() {
       isolatedNodes: isolated,
       primaryPath: globalBestPath,
       primaryEdges: pEdges,
-      allEdges: chainData.edges,
       processedNodeMap: nodeMap,
     };
   }, [chainData]);
 
-  // ── Cytoscape graph (Full Graph View) ──
+  // Convert to React Flow nodes/edges
   useEffect(() => {
-    if (viewMode !== 'full-graph' || !containerRef.current || !chainData || connectedNodes.length === 0) return;
+    if (!chainData || connectedNodes.length === 0) return;
 
-    const nodes = connectedNodes.map(n => ({
-      group: 'nodes' as const,
-      data: { ...n, shortLabel: n.shortLabel, fullLabel: n.label },
-    }));
+    let rfNodes: Node[] = [];
+    let rfEdges: Edge[] = [];
 
-    const edges = allEdges
-      .filter(e => connectedNodes.some(n => n.id === e.data.source) && connectedNodes.some(n => n.id === e.data.target))
-      .map(e => {
-        const isPrimary = primaryEdges.has(`${e.data.source}->${e.data.target}`);
-        return { group: 'edges' as const, data: { ...e.data, isPrimary } };
-      });
-
-    const cy = cytoscape({
-      container: containerRef.current,
-      elements: [...nodes, ...edges],
-      style: [
-        {
-          selector: 'node',
-          style: {
-            label: 'data(shortLabel)',
-            'text-valign': 'bottom',
-            'text-halign': 'center',
-            'font-size': '11px',
-            'font-family': 'Inter, sans-serif',
-            'font-weight': 700,
-            color: '#2a2e24',
-            'text-margin-y': 10,
-            'text-max-width': '120px',
-            'text-wrap': 'wrap',
-            'background-color': function (ele: cytoscape.NodeSingular) {
-              const sev = ele.data('severity') as Severity;
-              return ele.data('inPrimaryPath') ? SEV_COLORS[sev] || '#8a8e7c' : '#d8d4c8';
-            },
-            width: function (ele: cytoscape.NodeSingular) {
-              return ele.data('inPrimaryPath') ? 48 : 36;
-            },
-            height: function (ele: cytoscape.NodeSingular) {
-              return ele.data('inPrimaryPath') ? 48 : 36;
-            },
-            'border-width': function (ele: cytoscape.NodeSingular) {
-              return ele.data('inPrimaryPath') ? 4 : 2;
-            },
-            'border-color': function (ele: cytoscape.NodeSingular) {
-              return ele.data('inPrimaryPath') ? '#c75050' : '#b0ad9f';
-            },
-            'border-opacity': 1,
-            'overlay-opacity': 0,
-          } as cytoscape.Css.Node,
+    if (viewMode === 'full-graph') {
+      rfNodes = connectedNodes.map(n => ({
+        id: n.id,
+        type: 'attackNode',
+        position: { x: 0, y: 0 }, // computed by dagre below
+        data: {
+          label: n.shortLabel,
+          fullLabel: n.label,
+          severity: n.severity,
+          inPrimaryPath: n.inPrimaryPath,
+          selected: selectedNodeData?.id === n.id,
         },
-        {
-          selector: 'node:selected',
-          style: { 'border-width': 4, 'border-color': '#2a2e24' } as cytoscape.Css.Node,
-        },
-        {
-          selector: 'edge[isPrimary]',
-          style: {
-            width: 3.5,
-            'line-color': '#c75050',
-            'target-arrow-color': '#c75050',
-            'target-arrow-shape': 'triangle',
-            'arrow-scale': 1.2,
-            'curve-style': 'bezier',
-            'overlay-opacity': 0,
-          } as cytoscape.Css.Edge,
-        },
-        {
-          selector: 'edge[!isPrimary]',
-          style: {
-            width: 1.5,
-            'line-color': 'rgba(160,160,148,0.5)',
-            'target-arrow-color': 'rgba(160,160,148,0.6)',
-            'target-arrow-shape': 'triangle',
-            'arrow-scale': 0.8,
-            'curve-style': 'bezier',
-            'overlay-opacity': 0,
-          } as cytoscape.Css.Edge,
-        },
-      ],
-      layout: {
-        name: 'dagre',
-        rankDir: 'LR',
-        nodeSep: 60,
-        edgeSep: 40,
-        rankSep: 140,
-        padding: 60,
-        animate: true,
-        animationDuration: 600,
-      } as any,
-      minZoom: 0.2,
-      maxZoom: 3,
-      wheelSensitivity: 0.25,
-    });
+      }));
 
-    cy.on('tap', 'node', (evt: cytoscape.EventObject) => {
-      const d = evt.target.data();
-      const pn = processedNodeMap.get(d.id);
-      if (pn) setSelectedNode(pn);
-    });
+      rfEdges = (chainData.edges || [])
+        .filter(e => connectedNodes.some(n => n.id === e.data.source) && connectedNodes.some(n => n.id === e.data.target))
+        .map(e => {
+          const isPrimary = primaryEdges.has(\`\${e.data.source}->\${e.data.target}\`);
+          return {
+            id: \`\${e.data.source}-\${e.data.target}\`,
+            source: e.data.source,
+            target: e.data.target,
+            type: 'bezier', // smooth curve
+            animated: isPrimary,
+            style: {
+              stroke: isPrimary ? '#c75050' : 'rgba(160,160,148,0.4)',
+              strokeWidth: isPrimary ? 3 : 1.5,
+            },
+            markerEnd: {
+              type: MarkerType.ArrowClosed,
+              color: isPrimary ? '#c75050' : 'rgba(160,160,148,0.4)',
+              width: 20,
+              height: 20,
+            },
+          };
+        });
 
-    cy.on('tap', 'edge', (evt: cytoscape.EventObject) => {
-      setSelectedEdgeReason(evt.target.data().reason || '');
-    });
+      const layouted = getLayoutedElements(rfNodes, rfEdges, 'LR');
+      setNodes(layouted.nodes);
+      setEdges(layouted.edges);
 
-    cy.on('tap', (evt: cytoscape.EventObject) => {
-      if (evt.target === cy) {
-        setSelectedNode(null);
-        setSelectedEdgeReason('');
+    } else {
+      // Top path view - manual layout
+      const primaryNodesList = primaryPath.map(id => processedNodeMap.get(id)).filter(Boolean) as ProcessedNode[];
+      
+      rfNodes = primaryNodesList.map((n, i) => ({
+        id: n.id,
+        type: 'attackNode',
+        position: { x: i * 300, y: 150 },
+        data: {
+          label: n.shortLabel,
+          fullLabel: n.label,
+          severity: n.severity,
+          inPrimaryPath: true,
+          selected: selectedNodeData?.id === n.id,
+        },
+      }));
+
+      rfEdges = [];
+      for (let i = 0; i < primaryNodesList.length - 1; i++) {
+        rfEdges.push({
+          id: \`\${primaryNodesList[i].id}-\${primaryNodesList[i+1].id}\`,
+          source: primaryNodesList[i].id,
+          target: primaryNodesList[i+1].id,
+          type: 'straight',
+          animated: true,
+          style: { stroke: '#c75050', strokeWidth: 3 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#c75050' },
+        });
       }
-    });
 
-    cyRef.current = cy;
-    return () => { cy.destroy(); };
-  }, [viewMode, chainData, connectedNodes, primaryEdges, allEdges, processedNodeMap]);
+      setNodes(rfNodes);
+      setEdges(rfEdges);
+    }
+  }, [chainData, viewMode, connectedNodes, primaryPath, primaryEdges, processedNodeMap]);
 
-  const handleZoomIn = () => cyRef.current?.zoom(cyRef.current.zoom() * 1.3);
-  const handleZoomOut = () => cyRef.current?.zoom(cyRef.current.zoom() / 1.3);
-  const handleFit = () => cyRef.current?.fit(undefined, 40);
+  // Sync selection highlight
+  useEffect(() => {
+    setNodes(nds => nds.map(n => ({
+      ...n,
+      data: { ...n.data, selected: n.id === selectedNodeData?.id }
+    })));
+  }, [selectedNodeData, setNodes]);
 
-  // ── Render ──
 
-  const primaryNodes = useMemo(() =>
-    primaryPath.map(id => processedNodeMap.get(id)).filter(Boolean) as ProcessedNode[],
-    [primaryPath, processedNodeMap]
-  );
+  const onNodeClick = useCallback((_: any, node: Node) => {
+    const pn = processedNodeMap.get(node.id);
+    if (pn) setSelectedNodeData(pn);
+  }, [processedNodeMap]);
+
+  const onPaneClick = useCallback(() => {
+    setSelectedNodeData(null);
+  }, []);
 
   return (
-    <div className="h-full flex flex-col animate-fade-in gap-4 overflow-y-auto pb-8">
-      {/* Header */}
-      <div className="flex items-start justify-between">
+    <div className="h-full flex flex-col animate-fade-in gap-4 overflow-hidden relative pb-4">
+      {/* ── Header ── */}
+      <div className="flex items-start justify-between shrink-0">
         <div>
-          <h1 className="text-xl font-semibold text-[#2a2e24] mb-1">Attack Paths</h1>
-          <p className="text-[13px] text-[#6b6e60]">
+          <div className="flex items-center gap-3 mb-1">
+            <div className="w-10 h-10 bg-[#e0efd8] text-[#5a8a4e] rounded-xl flex items-center justify-center">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="18" cy="5" r="3"></circle>
+                <circle cx="6" cy="12" r="3"></circle>
+                <circle cx="18" cy="19" r="3"></circle>
+                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+              </svg>
+            </div>
+            <h1 className="text-2xl font-bold text-[#2a2e24]">Attack Paths</h1>
+          </div>
+          <p className="text-[13px] text-[#6b6e60] mt-2">
             Correlated findings and potential attacker movement discovered in this scan.
           </p>
         </div>
 
-        {/* View toggle */}
-        <div className="flex rounded-lg overflow-hidden border border-[#d8d4c8]">
+        <div className="flex items-center gap-3">
           <button
-            onClick={() => { setViewMode('top-path'); setSelectedNode(null); }}
-            className={`px-4 py-2 text-xs font-medium transition-colors ${
+            onClick={() => { setViewMode('top-path'); setSelectedNodeData(null); }}
+            className={\`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-colors \${
               viewMode === 'top-path'
                 ? 'bg-[#2a2e24] text-white'
-                : 'bg-white text-[#4a4e40] hover:bg-[#f0ece0]'
-            }`}
+                : 'bg-white border border-[#d8d4c8] text-[#4a4e40] hover:bg-[#f8f6f0]'
+            }\`}
           >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
             Top Attack Path
           </button>
           <button
-            onClick={() => { setViewMode('full-graph'); setSelectedNode(null); }}
-            className={`px-4 py-2 text-xs font-medium transition-colors ${
+            onClick={() => { setViewMode('full-graph'); setSelectedNodeData(null); }}
+            className={\`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-colors \${
               viewMode === 'full-graph'
                 ? 'bg-[#2a2e24] text-white'
-                : 'bg-white text-[#4a4e40] hover:bg-[#f0ece0]'
-            }`}
+                : 'bg-white border border-[#d8d4c8] text-[#4a4e40] hover:bg-[#f8f6f0]'
+            }\`}
           >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
             Full Graph View
           </button>
         </div>
       </div>
 
-      {/* ════════ TOP ATTACK PATH VIEW ════════ */}
-      {viewMode === 'top-path' && (
-        <div className="glass-panel p-6">
-          {primaryNodes.length === 0 ? (
-            <div className="text-center py-12 text-[#8a8e7c]">
-              <Shield size={32} className="mx-auto mb-3 opacity-50" />
-              <p className="text-sm">No connected attack paths found in this scan.</p>
-            </div>
+      {/* ── Main Canvas Area ── */}
+      <div className="flex-1 relative rounded-2xl border border-[#d8d4c8] bg-[#fdfdfc] overflow-hidden flex flex-col">
+        
+        {/* Stage Columns Background (Full Graph View Only) */}
+        {viewMode === 'full-graph' && (
+          <div className="absolute inset-0 z-0 flex pointer-events-none opacity-50">
+            {STAGES.map((stage, i) => (
+              <div 
+                key={stage.key} 
+                className={\`flex-1 h-full \${i < STAGES.length - 1 ? 'border-r border-dashed border-[#d8d4c8]' : ''}\`}
+              >
+                <div className="pt-6 pb-2 text-center">
+                  <div className="text-sm font-bold text-[#2a2e24]">{stage.label}</div>
+                  <div className="text-[11px] text-[#8a8e7c]">{stage.subtitle}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* React Flow Canvas */}
+        <div className="flex-1 w-full h-full z-10">
+          {nodes.length > 0 ? (
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onNodeClick={onNodeClick}
+              onPaneClick={onPaneClick}
+              fitView
+              fitViewOptions={{ padding: 0.2 }}
+              minZoom={0.1}
+              maxZoom={1.5}
+              proOptions={{ hideAttribution: true }}
+            >
+              <Background color="#e8e4d8" gap={20} size={1} />
+              <Controls className="bg-white border-[#d8d4c8] shadow-sm" showInteractive={false} />
+            </ReactFlow>
           ) : (
-            <>
-              {/* Stage headers */}
-              <div className="grid gap-0" style={{ gridTemplateColumns: `repeat(${primaryNodes.length}, 1fr)` }}>
-                {primaryNodes.map((node, i) => {
-                  const stage = STAGES.find(s => s.key === node.stage) || STAGES[0];
-                  return (
-                    <div key={`stage-${i}`} className="text-center pb-4 border-b border-[#e8e4d8]">
-                      <div className="text-[11px] font-semibold text-[#4a4e40] uppercase tracking-wider">
-                        {stage.label}
-                      </div>
-                      <div className="text-[10px] text-[#8a8e7c]">{stage.subtitle}</div>
-                    </div>
-                  );
-                })}
-              </div>
+            <div className="w-full h-full flex flex-col items-center justify-center text-[#8a8e7c]">
+              <Shield size={48} className="opacity-20 mb-4" />
+              <p>No active attack paths found.</p>
+            </div>
+          )}
+        </div>
 
-              {/* Primary path nodes */}
-              <div className="flex items-center justify-center gap-0 py-8">
-                {primaryNodes.map((node, i) => {
-                  const Icon = getIcon(node.label);
-                  return (
-                    <div key={node.id} className="flex items-center">
-                      {/* Node card */}
-                      <button
-                        onClick={() => setSelectedNode(node)}
-                        className="flex flex-col items-center gap-2 px-6 py-4 rounded-xl transition-all hover:scale-105 cursor-pointer"
-                        style={{ background: SEV_BG[node.severity] }}
-                      >
-                        <div
-                          className="w-12 h-12 rounded-full flex items-center justify-center"
-                          style={{ background: SEV_COLORS[node.severity] }}
-                        >
-                          <Icon size={20} className="text-white" />
-                        </div>
-                        <div className="text-xs font-semibold text-[#2a2e24] text-center leading-tight max-w-[100px]">
-                          {node.shortLabel}
-                        </div>
-                        <span
-                          className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
-                          style={{ color: SEV_COLORS[node.severity], background: SEV_BG[node.severity] }}
-                        >
-                          {node.severity}
-                        </span>
-                      </button>
-
-                      {/* Arrow */}
-                      {i < primaryNodes.length - 1 && (
-                        <div className="flex items-center mx-1">
-                          <div className="w-8 h-0.5 bg-[#c75050]" />
-                          <div className="w-0 h-0 border-t-[5px] border-t-transparent border-b-[5px] border-b-transparent border-l-[8px] border-l-[#c75050]" />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Secondary connected nodes */}
-              {connectedNodes.filter(n => !n.inPrimaryPath).length > 0 && (
-                <div className="border-t border-[#e8e4d8] pt-4 mt-2">
-                  <div className="text-[10px] text-[#8a8e7c] uppercase tracking-wider mb-3 font-medium">
-                    Other connected findings
+        {/* Selected Node Details Panel overlay */}
+        {selectedNodeData && (
+          <div className="absolute top-4 right-4 w-[340px] bg-white/95 backdrop-blur-md rounded-2xl border-l-4 shadow-xl p-6 z-50 animate-slide-right"
+               style={{ borderLeftColor: SEV_COLORS[selectedNodeData.severity] }}>
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-full flex items-center justify-center shrink-0 shadow-inner" style={{ background: SEV_COLORS[selectedNodeData.severity] }}>
+                  {(() => { const Icon = getIcon(selectedNodeData.label); return <Icon size={22} className="text-white" />; })()}
+                </div>
+                <div>
+                  <h3 className="font-bold text-[#2a2e24] text-base leading-tight">{fixEncoding(selectedNodeData.label)}</h3>
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded text-white" style={{ background: SEV_COLORS[selectedNodeData.severity] }}>
+                      {selectedNodeData.severity}
+                    </span>
+                    <span className="text-[10px] text-[#8a8e7c] uppercase font-bold tracking-wider">{selectedNodeData.layer}</span>
                   </div>
-                  <div className="flex flex-wrap gap-3">
-                    {connectedNodes.filter(n => !n.inPrimaryPath).map(node => {
-                      const Icon = getIcon(node.label);
-                      return (
-                        <button
-                          key={node.id}
-                          onClick={() => setSelectedNode(node)}
-                          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#f8f6f0] hover:bg-[#f0ece0] transition-colors cursor-pointer border border-[#e8e4d8]"
-                        >
-                          <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: SEV_COLORS[node.severity], opacity: 0.7 }}>
-                            <Icon size={14} className="text-white" />
-                          </div>
-                          <div className="text-left">
-                            <div className="text-[11px] font-medium text-[#3a3e34]">{node.shortLabel}</div>
-                            <div className="text-[9px] uppercase font-semibold" style={{ color: SEV_COLORS[node.severity] }}>
-                              {node.severity}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
+                </div>
+              </div>
+              <button onClick={() => setSelectedNodeData(null)} className="text-[#8a8e7c] hover:text-[#2a2e24] transition-colors p-1 bg-[#f4f2ea] rounded-full">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 mt-6 pt-4 border-t border-[#e8e4d8]">
+              {selectedNodeData.gives && (
+                <div>
+                  <span className="text-[9px] uppercase tracking-widest text-[#8a8e7c] font-bold">Gives attacker</span>
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {selectedNodeData.gives.split(',').map(g => (
+                      <span key={g.trim()} className="text-[11px] font-mono font-medium px-2 py-1 rounded-md" style={{ color: SEV_COLORS.critical, background: SEV_BG.critical }}>
+                        {g.trim()}
+                      </span>
+                    ))}
                   </div>
                 </div>
               )}
-            </>
-          )}
-        </div>
-      )}
-
-      {/* ════════ FULL GRAPH VIEW ════════ */}
-      {viewMode === 'full-graph' && (
-        <div className="flex-1 relative glass-panel overflow-hidden" style={{ minHeight: '450px' }}>
-          <div ref={containerRef} className="cytoscape-container w-full h-full min-h-[450px]" />
-
-          {/* Zoom controls */}
-          <div className="absolute bottom-4 right-4 flex flex-col gap-2">
-            <button onClick={handleZoomIn} className="w-8 h-8 glass-panel flex items-center justify-center hover:bg-black/5 transition-colors rounded-lg">
-              <ZoomIn size={14} className="text-[#4a4e40]" />
-            </button>
-            <button onClick={handleZoomOut} className="w-8 h-8 glass-panel flex items-center justify-center hover:bg-black/5 transition-colors rounded-lg">
-              <ZoomOut size={14} className="text-[#4a4e40]" />
-            </button>
-            <button onClick={handleFit} className="w-8 h-8 glass-panel flex items-center justify-center hover:bg-black/5 transition-colors rounded-lg">
-              <Maximize2 size={14} className="text-[#4a4e40]" />
-            </button>
-          </div>
-
-          {/* Legend */}
-          <div className="absolute top-4 left-4 glass-panel p-3 text-[10px] text-[#6b6e60]">
-            <div className="flex items-center gap-2 mb-1">
-              <div className="w-6 h-0.5 bg-[#c75050]" />
-              <span>Primary attack path</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-0.5 bg-[#c8c4b8]" />
-              <span>Secondary relationship</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ════════ DETAIL PANEL ════════ */}
-      {selectedNode && (
-        <div className="glass-panel p-5 border-l-4" style={{ borderLeftColor: SEV_COLORS[selectedNode.severity] }}>
-          <div className="flex items-start justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ background: SEV_COLORS[selectedNode.severity] }}>
-                {(() => { const Icon = getIcon(selectedNode.label); return <Icon size={18} className="text-white" />; })()}
-              </div>
-              <div>
-                <h3 className="font-semibold text-[#2a2e24] text-sm">{fixEncoding(selectedNode.label)}</h3>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-[10px] font-bold uppercase" style={{ color: SEV_COLORS[selectedNode.severity] }}>
-                    {selectedNode.severity}
-                  </span>
-                  <span className="text-[10px] text-[#8a8e7c] uppercase">{selectedNode.layer}</span>
+              {selectedNodeData.requires && (
+                <div>
+                  <span className="text-[9px] uppercase tracking-widest text-[#8a8e7c] font-bold">Requires</span>
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {selectedNodeData.requires.split(',').map(r => (
+                      <span key={r.trim()} className="text-[11px] font-mono font-medium px-2 py-1 rounded-md" style={{ color: SEV_COLORS.medium, background: SEV_BG.medium }}>
+                        {r.trim()}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
-            <button onClick={() => setSelectedNode(null)} className="text-[#8a8e7c] hover:text-[#4a4e40] transition-colors">
-              <X size={16} />
-            </button>
           </div>
+        )}
+      </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            {selectedNode.gives && (
-              <div>
-                <span className="text-[10px] uppercase tracking-wider text-[#8a8e7c] font-medium">Gives attacker</span>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {selectedNode.gives.split(',').map(g => (
-                    <span key={g.trim()} className="text-[11px] font-mono px-2 py-0.5 rounded" style={{ color: SEV_COLORS.critical, background: SEV_BG.critical }}>
-                      {g.trim()}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-            {selectedNode.requires && (
-              <div>
-                <span className="text-[10px] uppercase tracking-wider text-[#8a8e7c] font-medium">Requires</span>
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {selectedNode.requires.split(',').map(r => (
-                    <span key={r.trim()} className="text-[11px] font-mono px-2 py-0.5 rounded" style={{ color: SEV_COLORS.medium, background: SEV_BG.medium }}>
-                      {r.trim()}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {selectedEdgeReason && (
-            <div className="mt-3 pt-3 border-t border-[#e8e4d8]">
-              <span className="text-[10px] uppercase tracking-wider text-[#8a8e7c] font-medium">Relationship</span>
-              <p className="text-xs text-[#4a4e40] mt-1">{fixEncoding(selectedEdgeReason)}</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ════════ ISOLATED FINDINGS ════════ */}
+      {/* ── Isolated Findings Area ── */}
       {isolatedNodes.length > 0 && (
-        <div className="glass-panel p-5">
+        <div className="glass-panel p-5 mt-2 shrink-0">
           <div className="flex items-center gap-2 mb-4">
-            <Lock size={14} className="text-[#8a8e7c]" />
-            <span className="text-[11px] tracking-wider uppercase text-[#8a8e7c] font-medium">
+            <Lock size={16} className="text-[#8a8e7c]" />
+            <span className="text-[11px] tracking-[0.1em] uppercase text-[#6b6e60] font-bold">
               Other findings not in active path (Isolated findings)
             </span>
           </div>
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap gap-4">
             {isolatedNodes.map(node => {
               const Icon = getIcon(node.label);
               return (
                 <button
                   key={node.id}
-                  onClick={() => setSelectedNode(node)}
-                  className="flex flex-col items-center gap-1.5 px-4 py-3 rounded-lg bg-[#f8f6f0] hover:bg-[#f0ece0] transition-colors cursor-pointer border border-[#e8e4d8] min-w-[100px]"
+                  onClick={() => setSelectedNodeData(node)}
+                  className="flex flex-col items-center gap-2 px-5 py-4 rounded-xl bg-white hover:shadow-md transition-all cursor-pointer border border-[#e8e4d8] min-w-[140px] shadow-sm"
                 >
-                  <div className="w-9 h-9 rounded-full flex items-center justify-center bg-[#e0dcd4]">
-                    <Icon size={16} className="text-[#6b6e60]" />
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center bg-[#f4f2ea] shadow-inner mb-1 text-[#6b6e60]">
+                    <Icon size={20} />
                   </div>
-                  <div className="text-[11px] font-medium text-[#3a3e34] text-center leading-tight">
+                  <div className="text-[12px] font-bold text-[#2a2e24] text-center leading-tight">
                     {node.shortLabel}
                   </div>
-                  <span className="text-[9px] font-bold uppercase" style={{ color: SEV_COLORS[node.severity] }}>
+                  <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full mt-1" style={{ color: SEV_COLORS[node.severity], background: SEV_BG[node.severity] }}>
                     {node.severity}
                   </span>
                 </button>
