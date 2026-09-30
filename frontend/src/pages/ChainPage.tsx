@@ -10,7 +10,7 @@ import { useQuery } from '@tanstack/react-query';
 import cytoscape from 'cytoscape';
 import { getChain } from '../api/client';
 import type { ChainNode, Severity, Layer } from '../types/api';
-import { X, ZoomIn, ZoomOut, Maximize2, Shield, AlertTriangle } from 'lucide-react';
+import { X, ZoomIn, ZoomOut, Maximize2, Shield } from 'lucide-react';
 
 const LAYER_COLORS: Record<Layer, string> = {
   network: '#4a7a5e',
