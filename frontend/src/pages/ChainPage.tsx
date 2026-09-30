@@ -4,12 +4,12 @@
 // Isolated findings separated below the graph
 // ═══════════════════════════════════════════════════
 
-import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import cytoscape from 'cytoscape';
 import { getChain } from '../api/client';
-import type { ChainNode, ChainEdge, Severity } from '../types/api';
+import type { Severity, ChainResponse } from '../types/api';
 import { X, ZoomIn, ZoomOut, Maximize2, Shield, Code, Terminal, Globe, Database, Lock, Bug, Eye, Server, Key, FileWarning, Hash } from 'lucide-react';
 
 // ── Color system ──
@@ -156,7 +156,7 @@ export default function ChainPage() {
   const [selectedNode, setSelectedNode] = useState<ProcessedNode | null>(null);
   const [selectedEdgeReason, setSelectedEdgeReason] = useState<string>('');
 
-  const { data: chainData } = useQuery({
+  const { data: chainData } = useQuery<ChainResponse>({
     queryKey: ['chain', id],
     queryFn: () => getChain(id!),
     retry: 1,
@@ -365,17 +365,17 @@ export default function ChainPage() {
       wheelSensitivity: 0.25,
     });
 
-    cy.on('tap', 'node', (evt) => {
+    cy.on('tap', 'node', (evt: cytoscape.EventObject) => {
       const d = evt.target.data();
       const pn = processedNodeMap.get(d.id);
       if (pn) setSelectedNode(pn);
     });
 
-    cy.on('tap', 'edge', (evt) => {
+    cy.on('tap', 'edge', (evt: cytoscape.EventObject) => {
       setSelectedEdgeReason(evt.target.data().reason || '');
     });
 
-    cy.on('tap', (evt) => {
+    cy.on('tap', (evt: cytoscape.EventObject) => {
       if (evt.target === cy) {
         setSelectedNode(null);
         setSelectedEdgeReason('');
