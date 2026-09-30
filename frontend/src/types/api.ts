@@ -7,6 +7,24 @@ export type ScanStatus = 'queued' | 'running' | 'complete' | 'failed';
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 export type Layer = 'network' | 'code' | 'web' | 'iot';
 
+export interface ScanErrorInfo {
+  error_code: string;
+  title: string;
+  message: string;
+  action: string;
+  category?: 'BLOCKED' | 'FAILED' | 'WARNING';
+}
+
+export interface ToolWarning {
+  tool: string;
+  status: 'completed' | 'failed' | 'skipped';
+  findings_count?: number;
+  error_code?: string;
+  title?: string;
+  message?: string;
+  reason?: string;
+}
+
 export interface Finding {
   id: string;
   layer: Layer;
@@ -33,6 +51,8 @@ export interface ScanStatusResponse {
   current_tool: string | null;
   elapsed_seconds?: number;
   findings_so_far: Pick<Finding, 'id' | 'title' | 'severity' | 'layer' | 'cve_id'>[];
+  error_info?: ScanErrorInfo;
+  tool_warnings?: ToolWarning[];
 }
 
 export interface SeverityBreakdown {

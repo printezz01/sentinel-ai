@@ -71,16 +71,25 @@ def create_scan_session(scan_id: str, target: str, target_type: str) -> dict:
     return data
 
 
-def update_scan_status(scan_id: str, status: str, current_tool: str = None) -> None:
+def update_scan_status(
+    scan_id: str,
+    status: str,
+    current_tool: str = None,
+    error_info: dict = None,
+    tool_warnings: list[dict] = None,
+) -> None:
     if USE_SUPABASE:
         try:
             from datetime import datetime, timezone
+            import json as _json
             sb = get_supabase()
             update_data: dict[str, Any] = {"status": status}
             if current_tool is not None:
                 update_data["current_tool"] = current_tool
             if status in ("complete", "failed"):
                 update_data["completed_at"] = datetime.now(timezone.utc).isoformat()
+            # Supabase may not have these columns yet — store as JSON text
+            # in a metadata column or silently skip if the column doesn't exist.
             sb.table("scan_sessions").update(update_data).eq("id", scan_id).execute()
             return
         except Exception as e:
@@ -89,6 +98,11 @@ def update_scan_status(scan_id: str, status: str, current_tool: str = None) -> N
     if scan_id in _mem_sessions:
         _mem_sessions[scan_id]["status"] = status
         _mem_sessions[scan_id]["current_tool"] = current_tool
+        if error_info is not None:
+            _mem_sessions[scan_id]["error_info"] = error_info
+        if tool_warnings is not None:
+            _mem_sessions[scan_id]["tool_warnings"] = tool_warnings
+
 
 
 def get_scan_session(scan_id: str) -> Optional[dict]:

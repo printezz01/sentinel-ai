@@ -16,6 +16,13 @@ from app.tools import (
     scan_network, scan_code, scan_secrets, scan_web, scan_cctv, lookup_cve,
 )
 from app.engine import build_attack_chain, calculate_risk_score, map_owasp_findings
+from app.errors import (
+    ScanError, ScanErrorException, UNKNOWN_ERROR,
+    AGENT_ORCHESTRATION_FAILED, DATABASE_SAVE_FAILED,
+    NMAP_FAILED, NIKTO_FAILED, BANDIT_FAILED, SEMGREP_FAILED,
+    TRUFFLEHOG_FAILED, CVE_ENRICHMENT_FAILED,
+    classify_github_clone_error, classify_web_error,
+)
 
 logger = logging.getLogger("sentinel.agent")
 
@@ -112,6 +119,49 @@ def _create_langchain_tools(scan_id: str):
 
 
 # ══════════════════════════════════════════════════════════════
+# Shared: tool status tracking for partial scans
+# ══════════════════════════════════════════════════════════════
+
+class ToolTracker:
+    """Tracks per-tool success/failure for partial scan reporting."""
+    def __init__(self):
+        self.results: dict[str, dict] = {}
+
+    def success(self, tool_name: str, count: int = 0):
+        self.results[tool_name] = {"status": "completed", "findings_count": count}
+
+    def failed(self, tool_name: str, error: ScanError):
+        self.results[tool_name] = {
+            "status": "failed",
+            "error_code": error.error_code,
+            "title": error.title,
+            "message": error.message,
+        }
+
+    def skipped(self, tool_name: str, reason: str = "Not applicable"):
+        self.results[tool_name] = {"status": "skipped", "reason": reason}
+
+    @property
+    def has_failures(self) -> bool:
+        return any(r["status"] == "failed" for r in self.results.values())
+
+    @property
+    def has_successes(self) -> bool:
+        return any(r["status"] == "completed" for r in self.results.values())
+
+    @property
+    def warnings(self) -> list[dict]:
+        return [
+            {"tool": name, **info}
+            for name, info in self.results.items()
+            if info["status"] == "failed"
+        ]
+
+    def to_list(self) -> list[dict]:
+        return [{"tool": name, **info} for name, info in self.results.items()]
+
+
+# ══════════════════════════════════════════════════════════════
 # Deterministic Mode Runner (FREE — no API keys needed)
 # ══════════════════════════════════════════════════════════════
 
@@ -119,52 +169,101 @@ def _run_deterministic_mode(scan_id: str, target: str, target_type: str):
     """Run all relevant tools in sequence based on target_type. No LLM needed."""
     logger.info(f"[DETERMINISTIC MODE] Running scan {scan_id} for {target} ({target_type})")
     update_scan_status(scan_id, "running", "initializing")
+    tracker = ToolTracker()
 
     try:
         if target_type == "ip":
             update_scan_status(scan_id, "running", "scan_network")
-            network_findings = scan_network(target, scan_id)
-            logger.info(f"Network scan: {len(network_findings)} findings")
+            try:
+                network_findings = scan_network(target, scan_id)
+                tracker.success("Nmap", len(network_findings))
+                logger.info(f"Network scan: {len(network_findings)} findings")
+            except Exception as e:
+                logger.warning(f"Network scan failed: {e}")
+                tracker.failed("Nmap", NMAP_FAILED)
 
             # Lookup CVEs for discovered services
             update_scan_status(scan_id, "running", "lookup_cve")
-            for f in network_findings:
-                raw = f.get("raw_output", {})
-                service = raw.get("service", raw.get("product", ""))
-                version = raw.get("version", "")
-                if service and version:
-                    cves = lookup_cve(service, version)
-                    logger.info(f"CVE lookup for {service} {version}: {len(cves)} CVEs")
+            try:
+                for f in get_findings(scan_id):
+                    raw = f.get("raw_output", {})
+                    service = raw.get("service", raw.get("product", ""))
+                    version = raw.get("version", "")
+                    if service and version:
+                        cves = lookup_cve(service, version)
+                        logger.info(f"CVE lookup for {service} {version}: {len(cves)} CVEs")
+                tracker.success("CVE Enrichment")
+            except Exception as e:
+                logger.warning(f"CVE enrichment failed: {e}")
+                tracker.failed("CVE Enrichment", CVE_ENRICHMENT_FAILED)
 
             # Try CCTV scan
             update_scan_status(scan_id, "running", "scan_cctv")
-            cctv_findings = scan_cctv(target, scan_id)
-            logger.info(f"CCTV scan: {len(cctv_findings)} findings")
+            try:
+                cctv_findings = scan_cctv(target, scan_id)
+                tracker.success("CCTV Check", len(cctv_findings))
+                logger.info(f"CCTV scan: {len(cctv_findings)} findings")
+            except Exception as e:
+                logger.warning(f"CCTV scan failed: {e}")
+                tracker.failed("CCTV Check", ScanError(
+                    error_code="CCTV_CHECK_FAILED",
+                    title="CCTV Check Failed",
+                    message=str(e),
+                    action="Other scan results are still valid.",
+                    category="WARNING",
+                ))
 
         elif target_type == "subnet":
             update_scan_status(scan_id, "running", "scan_network")
-            network_findings = scan_network(target, scan_id)
-            logger.info(f"Network scan: {len(network_findings)} findings")
+            try:
+                network_findings = scan_network(target, scan_id)
+                tracker.success("Nmap", len(network_findings))
+                logger.info(f"Network scan: {len(network_findings)} findings")
+            except Exception as e:
+                logger.warning(f"Network scan failed: {e}")
+                tracker.failed("Nmap", NMAP_FAILED)
 
         elif target_type == "url":
             update_scan_status(scan_id, "running", "scan_web")
-            web_findings = scan_web(target, scan_id)
-            logger.info(f"Web scan: {len(web_findings)} findings")
+            try:
+                web_findings = scan_web(target, scan_id)
+                tracker.success("Nikto", len(web_findings))
+                logger.info(f"Web scan: {len(web_findings)} findings")
+            except Exception as e:
+                logger.warning(f"Web scan failed: {e}")
+                tracker.failed("Nikto", NIKTO_FAILED)
 
         elif target_type == "github":
+            update_scan_status(scan_id, "running", "scan_code")
             try:
-                update_scan_status(scan_id, "running", "scan_code")
                 code_findings = scan_code(target, scan_id)
+                tracker.success("Semgrep / Bandit", len(code_findings))
                 logger.info(f"Code scan: {len(code_findings)} findings")
+            except ScanErrorException as e:
+                logger.warning(f"Code scan failed: {e}")
+                tracker.failed("Semgrep / Bandit", e.scan_error)
             except Exception as e:
                 logger.warning(f"Code scan failed: {e}")
+                # Attempt to classify the clone error
+                err_str = str(e).lower()
+                if "repository not found" in err_str or "not found" in err_str:
+                    from app.errors import GITHUB_REPO_NOT_FOUND
+                    tracker.failed("Semgrep / Bandit", GITHUB_REPO_NOT_FOUND)
+                elif "authentication" in err_str or "could not read" in err_str:
+                    from app.errors import PRIVATE_GITHUB_REPO
+                    tracker.failed("Semgrep / Bandit", PRIVATE_GITHUB_REPO)
+                else:
+                    from app.errors import GITHUB_CLONE_FAILED
+                    tracker.failed("Semgrep / Bandit", GITHUB_CLONE_FAILED)
 
+            update_scan_status(scan_id, "running", "scan_secrets")
             try:
-                update_scan_status(scan_id, "running", "scan_secrets")
                 secret_findings = scan_secrets(target, scan_id)
+                tracker.success("TruffleHog", len(secret_findings))
                 logger.info(f"Secrets scan: {len(secret_findings)} findings")
             except Exception as e:
                 logger.warning(f"Secrets scan failed: {e}")
+                tracker.failed("TruffleHog", TRUFFLEHOG_FAILED)
 
         # Post-processing (always runs)
         update_scan_status(scan_id, "running", "build_attack_chain")
@@ -179,9 +278,40 @@ def _run_deterministic_mode(scan_id: str, target: str, target_type: str):
         owasp = map_owasp_findings(scan_id)
         logger.info(f"OWASP mapping complete")
 
-        update_scan_status(scan_id, "complete", None)
-        logger.info(f"[DETERMINISTIC MODE] Scan {scan_id} completed successfully")
+        # Determine final status
+        findings = get_findings(scan_id)
+        if tracker.has_failures and tracker.has_successes:
+            # Partial success — some tools failed, some succeeded
+            update_scan_status(
+                scan_id, "complete", None,
+                tool_warnings=tracker.warnings,
+            )
+            logger.info(f"[DETERMINISTIC MODE] Scan {scan_id} completed with warnings")
+        elif tracker.has_failures and not tracker.has_successes and not findings:
+            # All tools failed and no findings
+            first_failure = tracker.warnings[0] if tracker.warnings else {}
+            update_scan_status(
+                scan_id, "failed", None,
+                error_info={
+                    "error_code": first_failure.get("error_code", "UNKNOWN_ERROR"),
+                    "title": first_failure.get("title", "Scan Could Not Be Completed"),
+                    "message": first_failure.get("message", "All scan tools failed."),
+                    "action": "Try again or check the target.",
+                    "category": "FAILED",
+                },
+                tool_warnings=tracker.warnings,
+            )
+            logger.info(f"[DETERMINISTIC MODE] Scan {scan_id} failed — all tools failed")
+        else:
+            update_scan_status(scan_id, "complete", None, tool_warnings=tracker.to_list())
+            logger.info(f"[DETERMINISTIC MODE] Scan {scan_id} completed successfully")
 
+    except ScanErrorException as e:
+        logger.error(f"[DETERMINISTIC MODE] Scan blocked: {e.scan_error.title}")
+        update_scan_status(
+            scan_id, "failed", None,
+            error_info=e.scan_error.to_dict(),
+        )
     except Exception as e:
         logger.error(f"[DETERMINISTIC MODE] Scan failed: {e}")
         findings = get_findings(scan_id)
@@ -190,12 +320,18 @@ def _run_deterministic_mode(scan_id: str, target: str, target_type: str):
                 build_attack_chain(scan_id)
                 calculate_risk_score(scan_id)
                 map_owasp_findings(scan_id)
-                update_scan_status(scan_id, "complete", None)
+                update_scan_status(
+                    scan_id, "complete", None,
+                    tool_warnings=tracker.warnings if tracker.has_failures else None,
+                )
                 logger.info(f"[DETERMINISTIC MODE] Scan {scan_id} completed with discovered findings")
                 return
             except Exception as pe:
                 logger.error(f"Post-processing failed: {pe}")
-        update_scan_status(scan_id, "failed", None)
+        update_scan_status(
+            scan_id, "failed", None,
+            error_info=UNKNOWN_ERROR.to_dict(),
+        )
 
 
 # ══════════════════════════════════════════════════════════════
@@ -253,7 +389,10 @@ async def _run_groq_mode(scan_id: str, target: str, target_type: str):
             await asyncio.to_thread(map_owasp_findings, scan_id)
         except Exception:
             pass
-        update_scan_status(scan_id, "failed", None)
+        update_scan_status(
+            scan_id, "failed", None,
+            error_info=AGENT_ORCHESTRATION_FAILED.to_dict(),
+        )
 
 
 # ══════════════════════════════════════════════════════════════
@@ -310,7 +449,10 @@ async def _run_gemini_mode(scan_id: str, target: str, target_type: str):
             await asyncio.to_thread(map_owasp_findings, scan_id)
         except Exception:
             pass
-        update_scan_status(scan_id, "failed", None)
+        update_scan_status(
+            scan_id, "failed", None,
+            error_info=AGENT_ORCHESTRATION_FAILED.to_dict(),
+        )
 
 
 # ══════════════════════════════════════════════════════════════
@@ -362,7 +504,10 @@ async def _run_claude_mode(scan_id: str, target: str, target_type: str):
             await asyncio.to_thread(map_owasp_findings, scan_id)
         except Exception:
             pass
-        update_scan_status(scan_id, "failed", None)
+        update_scan_status(
+            scan_id, "failed", None,
+            error_info=AGENT_ORCHESTRATION_FAILED.to_dict(),
+        )
 
 
 # ══════════════════════════════════════════════════════════════

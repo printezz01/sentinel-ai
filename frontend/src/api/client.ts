@@ -51,7 +51,12 @@ async function apiFetch<T>(
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(body.detail || `HTTP ${res.status}`);
+      // Backend may return structured error: { error_code, title, message, action }
+      const detail = body.detail;
+      if (detail && typeof detail === 'object' && detail.title) {
+        throw new Error(`${detail.title}: ${detail.message || ''}`);
+      }
+      throw new Error(typeof detail === 'string' ? detail : `HTTP ${res.status}`);
     }
 
     // Read as text first, fix any garbled encoding, then parse

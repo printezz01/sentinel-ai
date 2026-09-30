@@ -2,8 +2,15 @@
 import ipaddress
 import re
 from urllib.parse import urlparse
-from fastapi import HTTPException
 from app.config import ALLOWED_IP_RANGES
+from app.errors import (
+    ScanErrorException,
+    PUBLIC_IP_BLOCKED, PUBLIC_SUBNET_BLOCKED,
+    INVALID_IP, INVALID_SUBNET,
+    INVALID_WEB_URL, INVALID_GITHUB_URL,
+    INVALID_TARGET_TYPE,
+)
+
 
 def _is_local_ip(ip_str: str) -> bool:
     """Check if an IP is localhost or in a private range."""
@@ -19,6 +26,26 @@ def _is_local_subnet(subnet_str: str) -> bool:
     try:
         net = ipaddress.ip_network(subnet_str, strict=False)
         return any(net.version == allowed.version and net.subnet_of(allowed) for allowed in (ipaddress.ip_network(r) for r in ALLOWED_IP_RANGES if "/" in r))
+    except ValueError:
+        return False
+
+
+def _is_valid_ip(ip_str: str) -> bool:
+    """Check if the string is a valid IP address or 'localhost'."""
+    if ip_str in ("localhost", "127.0.0.1"):
+        return True
+    try:
+        ipaddress.ip_address(ip_str)
+        return True
+    except ValueError:
+        return False
+
+
+def _is_valid_subnet(subnet_str: str) -> bool:
+    """Check if the string is a valid CIDR notation."""
+    try:
+        ipaddress.ip_network(subnet_str, strict=False)
+        return True
     except ValueError:
         return False
 
@@ -68,32 +95,22 @@ def validate_github_repo(url: str) -> bool:
 
 
 def validate_target(target: str, target_type: str) -> None:
-    """Validate that a target is safe to scan. Raises HTTPException if not."""
+    """Validate that a target is safe to scan. Raises ScanErrorException if not."""
     if target_type == "ip":
+        if not _is_valid_ip(target):
+            raise ScanErrorException(INVALID_IP)
         if not _is_local_ip(target):
-            raise HTTPException(
-                status_code=400,
-                detail="Public IP scanning is disabled"
-            )
+            raise ScanErrorException(PUBLIC_IP_BLOCKED)
     elif target_type == "subnet":
+        if not _is_valid_subnet(target):
+            raise ScanErrorException(INVALID_SUBNET)
         if not _is_local_subnet(target):
-            raise HTTPException(
-                status_code=400,
-                detail="Public subnet scanning is disabled"
-            )
+            raise ScanErrorException(PUBLIC_SUBNET_BLOCKED)
     elif target_type == "url":
         if not validate_web_target(target):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid website URL"
-            )
+            raise ScanErrorException(INVALID_WEB_URL)
     elif target_type == "github":
         if not validate_github_repo(target):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid GitHub repository URL"
-            )
+            raise ScanErrorException(INVALID_GITHUB_URL)
     else:
-        raise HTTPException(status_code=400, detail=f"Invalid target_type: {target_type}")
-
-
+        raise ScanErrorException(INVALID_TARGET_TYPE)

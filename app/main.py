@@ -66,6 +66,7 @@ async def shutdown_event():
 # ══════════════════════════════════════════════════════════════
 
 from app.validation import validate_target
+from app.errors import ScanErrorException, UNKNOWN_ERROR
 
 
 # ══════════════════════════════════════════════════════════════
@@ -107,10 +108,14 @@ async def _run_scan_background(scan_id: str, target: str, target_type: str):
                 )
             except Exception as mail_err:
                 logger.error(f"Failed to email scan report for {scan_id}: {mail_err}")
+    except ScanErrorException as e:
+        logger.error(f"Background scan blocked: {e.scan_error.title}")
+        from app.db import update_scan_status
+        update_scan_status(scan_id, "failed", None, error_info=e.scan_error.to_dict())
     except Exception as e:
         logger.error(f"Background scan failed: {e}")
         from app.db import update_scan_status
-        update_scan_status(scan_id, "failed", None)
+        update_scan_status(scan_id, "failed", None, error_info=UNKNOWN_ERROR.to_dict())
 
 
 # ══════════════════════════════════════════════════════════════
@@ -128,12 +133,19 @@ async def start_scan(req: ScanRequest, background_tasks: BackgroundTasks):
     """
     Start a new scan session.
     Validates target format and network policy, creates session, starts async scan.
+    Returns structured error JSON if validation fails.
     """
     target = req.target.strip()
     if req.target_type == "github" and not target.startswith(("http://", "https://")):
         target = f"https://{target}"
 
-    validate_target(target, req.target_type)
+    try:
+        validate_target(target, req.target_type)
+    except ScanErrorException as e:
+        raise HTTPException(
+            status_code=400,
+            detail=e.scan_error.to_dict(),
+        )
 
     scan_id = new_uuid()
     create_scan_session(scan_id, target, req.target_type)
@@ -147,7 +159,8 @@ async def start_scan(req: ScanRequest, background_tasks: BackgroundTasks):
 def scan_status(scan_id: str):
     """
     Get scan status — polled by frontend every 1-2 seconds.
-    Returns current status, active tool, and partial findings.
+    Returns current status, active tool, partial findings,
+    and structured error info when the scan fails.
     """
     session = get_scan_session(scan_id)
     if not session:
@@ -165,11 +178,21 @@ def scan_status(scan_id: str):
         for f in findings
     ]
 
-    return {
+    response: dict = {
         "status": session.get("status", "unknown"),
         "current_tool": session.get("current_tool"),
         "findings_so_far": partial,
     }
+
+    # Attach structured error info if the scan failed
+    if session.get("error_info"):
+        response["error_info"] = session["error_info"]
+
+    # Attach per-tool warnings for partial scans
+    if session.get("tool_warnings"):
+        response["tool_warnings"] = session["tool_warnings"]
+
+    return response
 
 
 @app.get("/scan/{scan_id}/dashboard")
@@ -355,7 +378,13 @@ async def subscribe(req: SubscribeRequest):
     The AI agent will scan the target every `interval_minutes` minutes
     and email a full PDF report to the specified email address.
     """
-    validate_target(req.target, req.target_type)
+    try:
+        validate_target(req.target, req.target_type)
+    except ScanErrorException as e:
+        raise HTTPException(
+            status_code=400,
+            detail=e.scan_error.to_dict(),
+        )
     sub_id = new_uuid()
 
     add_subscription(

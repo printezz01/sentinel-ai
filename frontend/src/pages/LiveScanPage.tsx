@@ -86,7 +86,8 @@ export default function LiveScanPage() {
   // Show toast on failure
   useEffect(() => {
     if (status?.status === 'failed') {
-      toast.error('Scan failed. Partial results may be available.');
+      const errorTitle = status?.error_info?.title;
+      toast.error(errorTitle ? `${errorTitle}` : 'Scan could not be completed. Partial results may be available.');
     }
   }, [status?.status]);
 
@@ -108,7 +109,7 @@ export default function LiveScanPage() {
           Live Scan
         </div>
         <h1 className="text-3xl font-semibold text-[#2a2e24] mb-2">
-          {isComplete ? 'Scan Complete' : isFailed ? 'Scan Failed' : 'Scanning target...'}
+          {isComplete ? 'Scan Complete' : isFailed ? (status?.error_info?.category === 'BLOCKED' ? 'Scan Blocked' : 'Scan Could Not Be Completed') : 'Scanning target...'}
         </h1>
       </div>
 
@@ -140,7 +141,48 @@ export default function LiveScanPage() {
             </div>
           )}
 
-          {isComplete && (
+          {isComplete && status?.tool_warnings && status.tool_warnings.some(w => w.status === 'failed') && (
+            <div className="glass-panel p-5 animate-fade-in border-l-4 border-l-sev-medium">
+              <div className="flex items-center gap-3 mb-2">
+                <AlertTriangle size={20} className="text-sev-medium" />
+                <span className="font-semibold text-[#2a2e24]">Scan Completed With Warnings</span>
+              </div>
+              <div className="space-y-1 mb-3">
+                {status.tool_warnings.map((tw) => (
+                  <div key={tw.tool} className="flex items-center gap-2 text-[13px]">
+                    {tw.status === 'completed' ? (
+                      <CheckCircle size={14} className="text-sev-low shrink-0" />
+                    ) : tw.status === 'failed' ? (
+                      <AlertTriangle size={14} className="text-sev-critical shrink-0" />
+                    ) : (
+                      <span className="text-sentinel-text-dim shrink-0">—</span>
+                    )}
+                    <span className={tw.status === 'failed' ? 'text-sev-critical' : 'text-[#4a4e40]'}>
+                      {tw.tool}
+                    </span>
+                    {tw.status === 'completed' && tw.findings_count !== undefined && (
+                      <span className="text-sentinel-text-dim">({tw.findings_count} findings)</span>
+                    )}
+                    {tw.status === 'failed' && tw.title && (
+                      <span className="text-sentinel-text-dim">— {tw.title}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <p className="text-[13px] text-[#6b6e60] mb-3">
+                Found {logEntries.length} vulnerabilities in {minutes}:{seconds}
+              </p>
+              <button
+                onClick={() => navigate(`/scan/${id}/dashboard`)}
+                className="btn-primary"
+              >
+                View Dashboard
+                <ArrowRight size={16} />
+              </button>
+            </div>
+          )}
+
+          {isComplete && (!status?.tool_warnings || !status.tool_warnings.some(w => w.status === 'failed')) && (
             <div className="glass-panel p-5 animate-fade-in border-l-4 border-l-sev-low">
               <div className="flex items-center gap-3 mb-2">
                 <CheckCircle size={20} className="text-sev-low" />
@@ -163,18 +205,38 @@ export default function LiveScanPage() {
             <div className="glass-panel p-5 animate-fade-in border-l-4 border-l-sev-critical">
               <div className="flex items-center gap-3 mb-2">
                 <AlertTriangle size={20} className="text-sev-critical" />
-                <span className="font-semibold text-[#2a2e24]">Scan Failed</span>
+                <span className="font-semibold text-[#2a2e24]">
+                  {status?.error_info?.category === 'BLOCKED'
+                    ? 'Scan Blocked'
+                    : 'Scan Could Not Be Completed'}
+                </span>
               </div>
-              <p className="text-[13px] text-[#6b6e60] mb-3">
-                Partial results may be available.
-              </p>
-              <button
-                onClick={() => navigate(`/scan/${id}/dashboard`)}
-                className="btn-primary"
-              >
-                View Partial Results
-                <ArrowRight size={16} />
-              </button>
+              {status?.error_info ? (
+                <>
+                  <div className="mb-2">
+                    <div className="text-[11px] tracking-[0.15em] uppercase text-sentinel-text-dim mb-1">Reason</div>
+                    <p className="text-[14px] font-medium text-[#2a2e24] mb-1">{status.error_info.title}</p>
+                    <p className="text-[13px] text-[#6b6e60]">{status.error_info.message}</p>
+                  </div>
+                  <div className="mb-3">
+                    <div className="text-[11px] tracking-[0.15em] uppercase text-sentinel-text-dim mb-1">What you can do</div>
+                    <p className="text-[13px] text-[#6b6e60]">{status.error_info.action}</p>
+                  </div>
+                </>
+              ) : (
+                <p className="text-[13px] text-[#6b6e60] mb-3">
+                  An unexpected error occurred. Partial results may be available.
+                </p>
+              )}
+              {logEntries.length > 0 && (
+                <button
+                  onClick={() => navigate(`/scan/${id}/dashboard`)}
+                  className="btn-primary"
+                >
+                  View Partial Results
+                  <ArrowRight size={16} />
+                </button>
+              )}
             </div>
           )}
         </div>
