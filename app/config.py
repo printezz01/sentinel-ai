@@ -63,6 +63,9 @@ ALLOWED_URLS: list[str] = [
     "https://printezz.in",
     "http://printezz.in",
     "printezz.in",
+    "https://banshivaidik.com/",
+    "http://banshivaidik.com/",
+    "banshivaidik.com",
 ]
 
 ALLOWED_GITHUB_REPOS: list[str] = [
