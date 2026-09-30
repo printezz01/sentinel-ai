@@ -10,8 +10,7 @@ import {
   ChevronLeft, ChevronRight, Download, Search,
   ArrowRight, History,
 } from 'lucide-react';
-import { downloadReport, checkBackendHealth, getScanHistory } from '../api/client';
-import { useQuery } from '@tanstack/react-query';
+import { downloadReport, checkBackendHealth } from '../api/client';
 import toast from 'react-hot-toast';
 
 export default function AppLayout() {
@@ -27,15 +26,6 @@ export default function AppLayout() {
 
   const hasScan = !!id;
   const isHome = location.pathname === '/';
-
-  const { data: historyData } = useQuery({
-    queryKey: ['scanHistoryCheck', id],
-    queryFn: () => getScanHistory(id!),
-    enabled: hasScan,
-    staleTime: 60000,
-  });
-
-  const showHistory = hasScan && historyData?.history_available;
 
   const handleDownloadPdf = async () => {
     if (!id) return;
@@ -96,7 +86,7 @@ export default function AppLayout() {
             </NavLink>
           ))}
 
-          {showHistory && (
+          {hasScan && (
             <NavLink
               to={`/scan/${id}/history`}
               className={({ isActive }) =>
