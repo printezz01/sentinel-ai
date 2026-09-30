@@ -15,8 +15,8 @@ import {
   MarkerType,
   useNodesState,
   useEdgesState,
-  Node,
-  Edge,
+  type Node,
+  type Edge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
@@ -194,7 +194,6 @@ const dagreGraph = new dagre.graphlib.Graph();
 dagreGraph.setDefaultEdgeLabel(() => ({}));
 
 const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'LR') => {
-  const isHorizontal = direction === 'LR';
   dagreGraph.setGraph({ rankdir: direction, nodesep: 60, ranksep: 200 });
 
   nodes.forEach((node) => {
@@ -246,8 +245,8 @@ export default function ChainPage() {
   const [selectedNodeData, setSelectedNodeData] = useState<ProcessedNode | null>(null);
 
   // React Flow state
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
   const { data: chainData } = useQuery<ChainResponse>({
     queryKey: ['chain', id],
