@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
-import { Clock, CheckCircle, ShieldAlert, ArrowRight, Activity, GitBranch } from 'lucide-react';
+import { Clock, Activity, GitBranch } from 'lucide-react';
 import { getScanHistory } from '../api/client';
-import { ScanHistoryResponse, ScanSummary } from '../types/api';
+import type { ScanHistoryResponse, ScanSummary } from '../types/api';
 
 function formatDate(isoString: string | null) {
   if (!isoString) return 'Unknown Date';
