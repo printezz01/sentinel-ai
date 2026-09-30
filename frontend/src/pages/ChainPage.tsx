@@ -149,8 +149,8 @@ const AttackNode = ({ data }: { data: any }) => {
         data.selected ? 'ring-2 ring-[#2a2e24]' : ''
       }`}
       style={{
-        border: data.inPrimaryPath ? \`2px solid \${color}\` : '1px solid #e8e4d8',
-        boxShadow: data.inPrimaryPath ? \`0 0 20px \${bg}\` : '0 2px 10px rgba(0,0,0,0.03)',
+        border: data.inPrimaryPath ? `2px solid ${color}` : '1px solid #e8e4d8',
+        boxShadow: data.inPrimaryPath ? `0 0 20px ${bg}` : '0 2px 10px rgba(0,0,0,0.03)',
       }}
     >
       <Handle type="target" position={Position.Left} className="w-2 h-2 opacity-0" />
@@ -165,7 +165,7 @@ const AttackNode = ({ data }: { data: any }) => {
         {data.inPrimaryPath && (
           <div 
             className="absolute inset-0 rounded-full animate-pulse" 
-            style={{ boxShadow: \`0 0 15px \${color}\`, opacity: 0.5 }}
+            style={{ boxShadow: `0 0 15px ${color}`, opacity: 0.5 }}
           />
         )}
       </div>
@@ -336,7 +336,7 @@ export default function ChainPage() {
 
     const pEdges = new Set<string>();
     for (let i = 0; i < globalBestPath.length - 1; i++) {
-      pEdges.add(\`\${globalBestPath[i]}->\${globalBestPath[i + 1]}\`);
+      pEdges.add(`${globalBestPath[i]}->${globalBestPath[i + 1]}`);
     }
 
     const connected = [...nodeMap.values()].filter(n => n.isConnected);
@@ -375,9 +375,9 @@ export default function ChainPage() {
       rfEdges = (chainData.edges || [])
         .filter(e => connectedNodes.some(n => n.id === e.data.source) && connectedNodes.some(n => n.id === e.data.target))
         .map(e => {
-          const isPrimary = primaryEdges.has(\`\${e.data.source}->\${e.data.target}\`);
+          const isPrimary = primaryEdges.has(`${e.data.source}->${e.data.target}`);
           return {
-            id: \`\${e.data.source}-\${e.data.target}\`,
+            id: `${e.data.source}-${e.data.target}`,
             source: e.data.source,
             target: e.data.target,
             type: 'bezier', // smooth curve
@@ -419,7 +419,7 @@ export default function ChainPage() {
       rfEdges = [];
       for (let i = 0; i < primaryNodesList.length - 1; i++) {
         rfEdges.push({
-          id: \`\${primaryNodesList[i].id}-\${primaryNodesList[i+1].id}\`,
+          id: `${primaryNodesList[i].id}-${primaryNodesList[i+1].id}`,
           source: primaryNodesList[i].id,
           target: primaryNodesList[i+1].id,
           type: 'straight',
@@ -477,22 +477,22 @@ export default function ChainPage() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => { setViewMode('top-path'); setSelectedNodeData(null); }}
-            className={\`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-colors \${
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-colors ${
               viewMode === 'top-path'
                 ? 'bg-[#2a2e24] text-white'
                 : 'bg-white border border-[#d8d4c8] text-[#4a4e40] hover:bg-[#f8f6f0]'
-            }\`}
+            }`}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
             Top Attack Path
           </button>
           <button
             onClick={() => { setViewMode('full-graph'); setSelectedNodeData(null); }}
-            className={\`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-colors \${
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-colors ${
               viewMode === 'full-graph'
                 ? 'bg-[#2a2e24] text-white'
                 : 'bg-white border border-[#d8d4c8] text-[#4a4e40] hover:bg-[#f8f6f0]'
-            }\`}
+            }`}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
             Full Graph View
@@ -509,7 +509,7 @@ export default function ChainPage() {
             {STAGES.map((stage, i) => (
               <div 
                 key={stage.key} 
-                className={\`flex-1 h-full \${i < STAGES.length - 1 ? 'border-r border-dashed border-[#d8d4c8]' : ''}\`}
+                className={`flex-1 h-full ${i < STAGES.length - 1 ? 'border-r border-dashed border-[#d8d4c8]' : ''}`}
               >
                 <div className="pt-6 pb-2 text-center">
                   <div className="text-sm font-bold text-[#2a2e24]">{stage.label}</div>
