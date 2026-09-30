@@ -440,9 +440,16 @@ def scan_code(github_url: str, scan_id: str) -> list[dict]:
         except Exception as e:
             logger.warning(f"Semgrep non-fatal: {e}")
 
-        # Native pattern fallback if external scanners returned no findings
-        if not findings:
-            findings = _scan_code_native(clone_dir)
+        # Always run native pattern scanner and merge with external scanner results
+        native_findings = _scan_code_native(clone_dir)
+        if native_findings:
+            # Avoid duplicates: check by title
+            existing_titles = {f.get("title", "").lower() for f in findings}
+            for nf in native_findings:
+                nf_title = nf.get("title", "").lower()
+                if nf_title not in existing_titles:
+                    findings.append(nf)
+                    existing_titles.add(nf_title)
 
         # Cleanup
         shutil.rmtree(clone_dir, ignore_errors=True)
