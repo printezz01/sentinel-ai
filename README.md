@@ -128,7 +128,7 @@ FUSIONX/
 │   ├── tools.py           # Scanner tool implementations
 │   ├── engine.py          # Attack chain, risk score, OWASP
 │   ├── reporting.py       # PDF report generator
-│   ├── config.py          # Configuration & whitelist
+│   ├── config.py          # Configuration & network policy
 │   └── db.py              # Supabase database layer
 ├── fixtures/              # Sample data for development only
 ├── migrations/            # Supabase SQL migrations
@@ -143,12 +143,12 @@ FUSIONX/
 
 ## 🔐 Safety Constraints
 
-Target validation allows loopback/private networks and explicitly listed GitHub repositories:
+Target validation accepts HTTP/HTTPS websites, public GitHub repository URLs, and loopback/private networks:
 - ✅ DVWA (Docker, localhost)
 - ✅ Metasploitable (Docker, localhost)
-- ✅ Whitelisted OWASP GitHub repos
+- ✅ Public GitHub repos (no pre-approval required)
 - ✅ Private ranges configured in `app/config.py`
-- ❌ Other targets → HTTP 400 at the API and scanner boundary
+- ❌ Public IP/subnet scans and malformed URLs → HTTP 400 at the API and scanner boundary
 
 ---
 

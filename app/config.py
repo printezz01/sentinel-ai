@@ -46,35 +46,13 @@ NVD_CACHE_PATH: Path = PROJECT_ROOT / "nvd_cache.sqlite"
 NMAP_TIMEOUT: int = 60   # seconds
 NIKTO_TIMEOUT: int = 90  # seconds
 
-# ─── Whitelist (HARD CONSTRAINT) ─────────────────────────────
+# ─── Network scan safety ─────────────────────────────
 ALLOWED_IP_RANGES: list[str] = [
     "127.0.0.1",
     "localhost",
     "10.0.0.0/8",
     "172.16.0.0/12",
     "192.168.0.0/16",
-]
-
-ALLOWED_URLS: list[str] = [
-    "http://localhost",
-    "http://127.0.0.1",
-    "https://localhost",
-    "https://127.0.0.1",
-    "https://printezz.in",
-    "http://printezz.in",
-    "printezz.in",
-    "https://banshivaidik.com/",
-    "http://banshivaidik.com/",
-    "banshivaidik.com",
-]
-
-ALLOWED_GITHUB_REPOS: list[str] = [
-    "https://github.com/OWASP/NodeGoat",
-    "https://github.com/OWASP/PyGoat",
-    "https://github.com/OWASP/railsgoat",
-    # Your own repos
-    "https://github.com/printezz01/FUSIONX-",
-    "https://github.com/printezz01/PrintMacha",
 ]
 
 # ─── CORS Origins ────────────────────────────────────────────

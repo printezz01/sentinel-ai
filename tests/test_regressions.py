@@ -46,10 +46,57 @@ class RegressionTests(unittest.TestCase):
             with self.subTest(target=target), self.assertRaises(HTTPException):
                 validate_target(target, kind)
 
+    def test_requested_targets_at_api_boundary(self):
+        cases = [
+            ("https://banshivaidik.com/", "url", 200),
+            ("https://github.com/printezz01/GHOSTCUE", "github", 200),
+            ("http://localhost", "url", 200),
+            ("192.168.1.0/24", "subnet", 200),
+            ("8.8.8.8", "ip", 400),
+            ("8.8.8.0/24", "subnet", 400),
+        ]
+        with patch("app.main._run_scan_background", new_callable=AsyncMock) as run, TestClient(app) as client:
+            for target, kind, expected in cases:
+                with self.subTest(target=target):
+                    run.reset_mock()
+                    response = client.post("/scan", json={"target": target, "target_type": kind})
+                    self.assertEqual(response.status_code, expected, response.text)
+                    if expected == 200:
+                        run.assert_awaited_once_with(response.json()["scan_id"], target, kind)
+                    else:
+                        run.assert_not_called()
+
+    def test_new_public_targets_reach_scanners(self):
+        with patch.object(tools.subprocess, "run", side_effect=clean_nikto) as run:
+            self.assertEqual(tools.scan_web("https://banshivaidik.com/", self.scan_id), [])
+            self.assertTrue(run.called)
+        for fn, output in [(tools.scan_code, '{"results": []}'), (tools.scan_secrets, '')]:
+            with patch.object(tools.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout=output)) as run:
+                self.assertEqual(fn("https://github.com/printezz01/GHOSTCUE", self.scan_id), [])
+                self.assertEqual(run.call_args_list[0].args[0][:2], ["git", "clone"])
+                self.assertIn("https://github.com/printezz01/GHOSTCUE", run.call_args_list[0].args[0])
+
+    def test_malformed_targets_and_network_boundaries(self):
+        for target, kind in [("https://", "url"), ("https://bad host", "url"),
+                             ("http://example.com:99999", "url"), ("http://[broken", "url"),
+                             ("https://github.com.evil.test/a/b", "github"),
+                             ("https://github.com/a", "github"),
+                             ("https://github.com/a/b?x=1", "github"),
+                             ("172.15.1.1", "ip"), ("192.168.0.0/15", "subnet")]:
+            with self.subTest(target=target), self.assertRaises(HTTPException):
+                validate_target(target, kind)
+        for target, kind in [("localhost", "ip"), ("192.168.1.20", "ip"),
+                             ("10.0.0.0/24", "subnet"), ("https://example.com", "url"),
+                             ("http://example.com", "url"), ("https://printezz.in", "url"),
+                             ("https://github.com/OWASP/NodeGoat", "github"),
+                             ("https://github.com/OWASP/PyGoat.git", "github")]:
+            with self.subTest(target=target):
+                validate_target(target, kind)
+
     def test_tool_boundary_rejects_before_execution(self):
         with patch.object(tools.subprocess, "run") as run:
             with self.assertRaises(HTTPException):
-                tools.scan_web("https://example.com", self.scan_id)
+                tools.scan_web("file:///etc/passwd", self.scan_id)
             run.assert_not_called()
 
     def test_empty_network_is_clean(self):

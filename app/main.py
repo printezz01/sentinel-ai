@@ -4,16 +4,14 @@ Run: uvicorn app.main:app --reload
 """
 
 import asyncio
-import ipaddress
 import logging
-from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from app.config import CORS_ORIGINS, ALLOWED_IP_RANGES, ALLOWED_URLS, ALLOWED_GITHUB_REPOS
+from app.config import CORS_ORIGINS
 from app.db import (
     new_uuid, create_scan_session, get_scan_session,
     get_findings, get_risk_score,
@@ -129,7 +127,7 @@ async def health():
 async def start_scan(req: ScanRequest, background_tasks: BackgroundTasks):
     """
     Start a new scan session.
-    Validates target against whitelist, creates session, starts async scan.
+    Validates target format and network policy, creates session, starts async scan.
     """
     target = req.target.strip()
     if req.target_type == "github" and not target.startswith(("http://", "https://")):

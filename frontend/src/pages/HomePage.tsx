@@ -20,7 +20,7 @@ const QUICK_TARGETS = [
 
 // Validation patterns
 const PATTERNS: Record<TargetType, RegExp> = {
-  ip: /^(\d{1,3}\.){3}\d{1,3}$/,
+  ip: /^(localhost|(\d{1,3}\.){3}\d{1,3})$/,
   subnet: /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/,
   url: /^https?:\/\/.+/i,
   github: /^(https?:\/\/)?(www\.)?github\.com\/.+\/.+/i,
@@ -195,7 +195,7 @@ export default function HomePage() {
 
       {/* Demo disclaimer */}
       <div className="mt-8 text-xs text-[#8a8e7c] max-w-xl">
-        Demo build. Only localhost targets and whitelisted public vulnerable repos are accepted.
+        HTTP/HTTPS websites and public GitHub repositories are accepted. Network scans are limited to localhost and private ranges.
       </div>
     </div>
   );

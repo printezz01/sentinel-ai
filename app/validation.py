@@ -1,8 +1,9 @@
 """Target policy shared by API and scanner tools."""
 import ipaddress
+import re
 from urllib.parse import urlparse
 from fastapi import HTTPException
-from app.config import ALLOWED_IP_RANGES, ALLOWED_GITHUB_REPOS, ALLOWED_URLS
+from app.config import ALLOWED_IP_RANGES
 
 def _is_local_ip(ip_str: str) -> bool:
     """Check if an IP is localhost or in a private range."""
@@ -22,35 +23,48 @@ def _is_local_subnet(subnet_str: str) -> bool:
         return False
 
 
-def _is_allowed_url(url: str) -> bool:
-    """Check if a URL points to localhost or an allowed domain."""
-    parsed = urlparse(url)
-    host = parsed.hostname or ""
-    if not (parsed.scheme in ("http", "https") and not parsed.username and not parsed.password):
+def validate_web_target(url: str) -> bool:
+    """Accept structurally valid HTTP(S) URLs without a domain allowlist."""
+    try:
+        if not url or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in url) or "\\" in url:
+            return False
+        parsed = urlparse(url)
+        host = parsed.hostname
+        if parsed.scheme not in {"http", "https"} or not host or parsed.username is not None or parsed.password is not None:
+            return False
+        # Accessing port also rejects malformed and out-of-range ports.
+        if parsed.port is not None and parsed.port == 0:
+            return False
+        try:
+            ipaddress.ip_address(host)
+            return True
+        except ValueError:
+            ascii_host = host.encode("idna").decode("ascii").rstrip(".")
+            return len(ascii_host) <= 253 and all(
+                re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
+                for label in ascii_host.split(".")
+            )
+    except (ValueError, UnicodeError):
         return False
-    if _is_local_ip(host):
-        return True
-    for allowed in ALLOWED_URLS:
-        allowed_host = urlparse(allowed).hostname or allowed.replace("https://", "").replace("http://", "").split("/")[0]
-        if host.lower() == allowed_host.lower():
-            return True
-    return False
 
 
-def _normalize_github_url(url: str) -> str:
-    cleaned = url.strip().rstrip("/").removesuffix(".git").lower()
-    if not cleaned.startswith(("http://", "https://")):
-        cleaned = f"https://{cleaned}"
-    return cleaned
-
-
-def _is_allowed_github(url: str) -> bool:
-    """Check if a GitHub URL is in the whitelist."""
-    norm_url = _normalize_github_url(url)
-    for allowed in ALLOWED_GITHUB_REPOS:
-        if norm_url == _normalize_github_url(allowed):
-            return True
-    return False
+def validate_github_repo(url: str) -> bool:
+    """Accept repository roots; the existing clone determines availability."""
+    if not validate_web_target(url):
+        return False
+    parsed = urlparse(url)
+    if parsed.netloc.lower() != "github.com" or parsed.query or parsed.fragment:
+        return False
+    parts = parsed.path.strip("/").split("/")
+    if len(parts) != 2:
+        return False
+    owner, repo = parts
+    repo = repo.removesuffix(".git")
+    return bool(
+        re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?", owner)
+        and re.fullmatch(r"[A-Za-z0-9_.-]+", repo)
+        and repo not in {".", ".."}
+    )
 
 
 def validate_target(target: str, target_type: str) -> None:
@@ -59,25 +73,25 @@ def validate_target(target: str, target_type: str) -> None:
         if not _is_local_ip(target):
             raise HTTPException(
                 status_code=400,
-                detail=f"Rejected: '{target}' is not a safe local target. Only localhost and private IPs are allowed."
+                detail="Public IP scanning is disabled"
             )
     elif target_type == "subnet":
         if not _is_local_subnet(target):
             raise HTTPException(
                 status_code=400,
-                detail=f"Rejected: '{target}' is not a safe private subnet."
+                detail="Public subnet scanning is disabled"
             )
     elif target_type == "url":
-        if not _is_allowed_url(target):
+        if not validate_web_target(target):
             raise HTTPException(
                 status_code=400,
-                detail=f"Rejected: '{target}' is not a safe local URL. Only localhost URLs are allowed."
+                detail="Invalid website URL"
             )
     elif target_type == "github":
-        if not _is_allowed_github(target):
+        if not validate_github_repo(target):
             raise HTTPException(
                 status_code=400,
-                detail=f"Rejected: '{target}' is not in the allowed GitHub repos whitelist. Allowed: {', '.join(ALLOWED_GITHUB_REPOS)}"
+                detail="Invalid GitHub repository URL"
             )
     else:
         raise HTTPException(status_code=400, detail=f"Invalid target_type: {target_type}")
