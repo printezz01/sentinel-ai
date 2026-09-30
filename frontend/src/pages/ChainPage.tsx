@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════
 // Sentinel AI — Attack Chain Graph Page
 // Cytoscape.js visualization of vulnerability chains
-// Matches reference: small nodes, short codes (NET-101), organic layout
+// Clean hierarchical layout with meaningful labels
 // ═══════════════════════════════════════════════════
 
 import { useEffect, useRef, useState } from 'react';
@@ -19,13 +19,6 @@ const LAYER_COLORS: Record<Layer, string> = {
   iot: '#c75050',
 };
 
-const LAYER_PREFIXES: Record<string, string> = {
-  network: 'NET',
-  code: 'COD',
-  web: 'WEB',
-  iot: 'CCT',
-};
-
 const LAYER_LABELS: Record<Layer, string> = {
   network: 'network',
   code: 'code',
@@ -33,19 +26,69 @@ const LAYER_LABELS: Record<Layer, string> = {
   iot: 'cctv',
 };
 
-// Reference uses small nodes — 12-20px range
-const SEVERITY_SIZE: Record<Severity, number> = {
-  critical: 20,
-  high: 18,
-  medium: 16,
-  low: 14,
-  info: 12,
+// Severity drives both color ring and node size
+const SEVERITY_COLORS: Record<Severity, string> = {
+  critical: '#c75050',
+  high: '#d4784a',
+  medium: '#c4a644',
+  low: '#7a9c5e',
+  info: '#8a8e7c',
 };
 
-/** Generate a short label like "NET-101" from layer + index */
-function makeShortLabel(layer: string, index: number): string {
-  const prefix = LAYER_PREFIXES[layer] || 'UNK';
-  return `${prefix}-${(100 + index).toString()}`;
+const SEVERITY_SIZE: Record<Severity, number> = {
+  critical: 50,
+  high: 44,
+  medium: 38,
+  low: 32,
+  info: 28,
+};
+
+/** Shorten a vulnerability title to fit a node label (max ~18 chars) */
+function shortenTitle(title: string): string {
+  if (!title) return '?';
+  
+  const abbreviations: Record<string, string> = {
+    'Arbitrary Code Execution via eval()': 'eval() Exec',
+    'Dynamic Code Injection via String Concatenation': 'Code Injection',
+    'Missing Cross-Site Request Forgery (CSRF) Protection': 'CSRF Missing',
+    'Exposed Cryptographic Private Key': 'Exposed Key',
+    'Hardcoded Password Hash (Bcrypt)': 'Hardcoded Hash',
+    'Hardcoded Password in Source Code': 'Hardcoded Pwd',
+    'Hardcoded Database Connection String': 'DB Conn String',
+    'Hardcoded Credentials in Source Code': 'Hardcoded Creds',
+    'Unvalidated Open URL Redirection': 'Open Redirect',
+    'Insecure Container Configuration (Docker)': 'Docker Root',
+    'Insecure Session Cookie Configuration': 'Insecure Cookie',
+    'OS Command Injection': 'Cmd Injection',
+    'OS Command Injection (Node.js)': 'Cmd Injection',
+    'Cross-Site Scripting (XSS)': 'XSS',
+    'Cross-Site Scripting via Disabled Autoescaping': 'XSS Autoescape',
+    'Cross-Site Scripting via Unescaped Template Output': 'XSS Template',
+    'Cross-Site Scripting via EJS Unescaped Output': 'XSS EJS',
+    'DOM-Based Cross-Site Scripting (innerHTML)': 'XSS innerHTML',
+    'DOM-Based Cross-Site Scripting (document.write)': 'XSS doc.write',
+    'Server-Side XSS via Unescaped Template Output': 'XSS Template',
+    'Database Injection Vulnerability': 'SQL Injection',
+    'NoSQL Injection': 'NoSQL Injection',
+    'NoSQL Operator Injection Pattern': 'NoSQL Operator',
+    'Server-Side Request Forgery (SSRF)': 'SSRF',
+    'Server-Side Template Injection (SSTI)': 'SSTI',
+    'Path Traversal / Local File Inclusion': 'Path Traversal',
+    'Weak Cryptographic Hash (MD5)': 'Weak MD5',
+    'Weak Cryptographic Hash (SHA1)': 'Weak SHA1',
+    'Insecure Deserialization': 'Deserialize',
+    'Debug Mode Enabled in Production': 'Debug Mode',
+    'Regular Expression Denial of Service (ReDoS)': 'ReDoS',
+    'Information Disclosure via Server Header': 'Server Header',
+    'Unsafe Shell Execution': 'Shell=True',
+  };
+
+  if (abbreviations[title]) return abbreviations[title];
+  
+  // Generic shortener: take first 2-3 meaningful words
+  const words = title.replace(/[()]/g, '').split(/\s+/);
+  if (words.length <= 2) return title;
+  return words.slice(0, 2).join(' ');
 }
 
 export default function ChainPage() {
@@ -64,22 +107,13 @@ export default function ChainPage() {
   useEffect(() => {
     if (!containerRef.current || !chainData) return;
 
-    // Generate short labels per layer (NET-100, NET-101, COD-100, etc.)
-    const layerCounters: Record<string, number> = {};
-    const nodeIdToShortLabel: Record<string, string> = {};
-
     const processedNodes = chainData.nodes.map((n) => {
-      const layer = n.data.layer || 'network';
-      if (!layerCounters[layer]) layerCounters[layer] = 0;
-      const shortLabel = makeShortLabel(layer, layerCounters[layer]++);
-      nodeIdToShortLabel[n.data.id] = shortLabel;
-
+      const shortLabel = shortenTitle(n.data.label || '');
       return {
         group: 'nodes' as const,
         data: {
           ...n.data,
           shortLabel,
-          // Keep original label for detail panel
           fullLabel: n.data.label,
         },
       };
@@ -94,77 +128,90 @@ export default function ChainPage() {
         {
           selector: 'node',
           style: {
-            // Use short label like the reference design
             label: 'data(shortLabel)',
             'text-valign': 'bottom',
             'text-halign': 'center',
-            'font-size': '9px',
+            'font-size': '10px',
             'font-family': 'Inter, sans-serif',
-            'font-weight': 500,
-            color: '#4a4e40',
-            'text-margin-y': 6,
+            'font-weight': 600,
+            color: '#3a3e34',
+            'text-margin-y': 8,
+            'text-max-width': '100px',
+            'text-wrap': 'wrap',
             'background-color': function (ele: cytoscape.NodeSingular) {
               const layer = ele.data('layer') as Layer;
               return LAYER_COLORS[layer] || '#8a8e7c';
             },
             width: function (ele: cytoscape.NodeSingular) {
               const severity = ele.data('severity') as Severity;
-              return SEVERITY_SIZE[severity] || 20;
+              return SEVERITY_SIZE[severity] || 38;
             },
             height: function (ele: cytoscape.NodeSingular) {
               const severity = ele.data('severity') as Severity;
-              return SEVERITY_SIZE[severity] || 20;
+              return SEVERITY_SIZE[severity] || 38;
             },
-            'border-width': 0,
+            'border-width': 3,
+            'border-color': function (ele: cytoscape.NodeSingular) {
+              const severity = ele.data('severity') as Severity;
+              return SEVERITY_COLORS[severity] || '#8a8e7c';
+            },
+            'border-opacity': 0.7,
             'overlay-opacity': 0,
-            'transition-property': 'background-color, width, height',
+            'transition-property': 'background-color, width, height, border-color',
             'transition-duration': 200,
           } as cytoscape.Css.Node,
         },
         {
           selector: 'node:selected',
           style: {
-            'border-width': 2,
+            'border-width': 4,
             'border-color': '#e8e4dc',
+            'border-opacity': 1,
             'background-color': function (ele: cytoscape.NodeSingular) {
-              const layer = ele.data('layer') as Layer;
-              return LAYER_COLORS[layer] || '#8a8e7c';
+              const severity = ele.data('severity') as Severity;
+              return SEVERITY_COLORS[severity] || '#8a8e7c';
             },
           } as cytoscape.Css.Node,
         },
         {
           selector: 'edge',
           style: {
-            width: 1,
-            'line-color': 'rgba(100, 110, 90, 0.25)',
-            'target-arrow-color': 'rgba(100, 110, 90, 0.35)',
+            width: 1.5,
+            'line-color': 'rgba(90, 100, 80, 0.2)',
+            'target-arrow-color': 'rgba(90, 100, 80, 0.35)',
             'target-arrow-shape': 'triangle',
-            'arrow-scale': 0.6,
-            'curve-style': 'bezier',
+            'arrow-scale': 0.7,
+            'curve-style': 'unbundled-bezier',
+            'control-point-distances': [30],
+            'control-point-weights': [0.5],
             'overlay-opacity': 0,
           } as cytoscape.Css.Edge,
         },
         {
           selector: 'edge:selected',
           style: {
-            width: 2,
-            'line-color': '#7a8c5e',
-            'target-arrow-color': '#7a8c5e',
+            width: 2.5,
+            'line-color': '#c75050',
+            'target-arrow-color': '#c75050',
           } as cytoscape.Css.Edge,
         },
       ],
       layout: {
         name: 'cose',
         animate: true,
-        animationDuration: 800,
-        nodeRepulsion: () => 30000,
-        idealEdgeLength: () => 200,
-        gravity: 0.15,
-        padding: 100,
+        animationDuration: 1000,
+        animationEasing: 'ease-out',
+        nodeRepulsion: () => 80000,
+        idealEdgeLength: () => 250,
+        edgeElasticity: () => 100,
+        gravity: 0.08,
+        numIter: 1500,
+        padding: 80,
+        nodeDimensionsIncludeLabels: true,
       },
-      minZoom: 0.3,
+      minZoom: 0.2,
       maxZoom: 3,
-      wheelSensitivity: 0.3,
+      wheelSensitivity: 0.25,
     });
 
     cy.on('tap', 'node', (evt) => {
@@ -217,16 +264,28 @@ export default function ChainPage() {
         </div>
 
         {/* Legend */}
-        <div className="glass-panel p-4 flex gap-6">
-          {(Object.entries(LAYER_LABELS) as [Layer, string][]).map(([layer, label]) => (
-            <div key={layer} className="flex items-center gap-2">
-              <div
-                className="w-3 h-3 rounded-full"
-                style={{ background: LAYER_COLORS[layer] }}
-              />
-              <span className="text-xs text-[#4a4e40]">{label}</span>
-            </div>
-          ))}
+        <div className="glass-panel p-4">
+          <div className="flex gap-6 mb-3">
+            {(Object.entries(LAYER_LABELS) as [Layer, string][]).map(([layer, label]) => (
+              <div key={layer} className="flex items-center gap-2">
+                <div
+                  className="w-3 h-3 rounded-full"
+                  style={{ background: LAYER_COLORS[layer] }}
+                />
+                <span className="text-xs text-[#4a4e40]">{label}</span>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-4 border-t border-[#e0dcd4] pt-3">
+            {(Object.entries(SEVERITY_COLORS) as [Severity, string][])
+              .filter(([sev]) => sev !== 'info')
+              .map(([sev, color]) => (
+                <div key={sev} className="flex items-center gap-1.5">
+                  <div className="w-2 h-2 rounded-full" style={{ background: color }} />
+                  <span className="text-[10px] text-[#6b6e60] uppercase">{sev}</span>
+                </div>
+              ))}
+          </div>
         </div>
       </div>
 
@@ -261,9 +320,6 @@ export default function ChainPage() {
           <div className="absolute top-4 right-4 w-80 glass-panel p-5 animate-slide-right shadow-lg">
             <div className="flex items-start justify-between mb-3">
               <div>
-                <span className="text-xs font-mono font-semibold text-[#2a2e24] mr-2">
-                  {selectedNode.shortLabel}
-                </span>
                 <span
                   className={`text-[10px] tracking-wider uppercase font-semibold badge-${selectedNode.severity}`}
                 >
@@ -280,19 +336,19 @@ export default function ChainPage() {
                 <X size={16} />
               </button>
             </div>
-            <h3 className="font-semibold text-[#2a2e24] mb-3 text-sm">
+            <h3 className="font-semibold text-[#2a2e24] mb-3 text-sm leading-relaxed">
               {fixEncoding(selectedNode.fullLabel || selectedNode.label)}
             </h3>
             {selectedNode.gives && (
-              <div className="mb-2">
+              <div className="mb-3">
                 <span className="text-[10px] uppercase tracking-wider text-[#8a8e7c]">
-                  Gives
+                  Gives attacker
                 </span>
                 <div className="flex flex-wrap gap-1 mt-1">
                   {selectedNode.gives.split(',').map((g: string) => (
                     <span
                       key={g.trim()}
-                      className="text-[11px] font-mono bg-sev-low/10 text-sev-low px-2 py-0.5 rounded"
+                      className="text-[11px] font-mono bg-sev-critical/10 text-sev-critical px-2 py-0.5 rounded"
                     >
                       {g.trim()}
                     </span>
@@ -309,7 +365,7 @@ export default function ChainPage() {
                   {selectedNode.requires.split(',').map((r: string) => (
                     <span
                       key={r.trim()}
-                      className="text-[11px] font-mono bg-sev-high/10 text-sev-high px-2 py-0.5 rounded"
+                      className="text-[11px] font-mono bg-sev-medium/10 text-sev-medium px-2 py-0.5 rounded"
                     >
                       {r.trim()}
                     </span>
