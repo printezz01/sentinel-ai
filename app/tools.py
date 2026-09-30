@@ -245,13 +245,35 @@ def _scan_code_native(clone_dir: Path) -> list[dict]:
     """Scan source code files using static pattern matching when semgrep is unavailable."""
     findings = []
     patterns = [
+        # ── Existing patterns ──
         ("eval-detected", re.compile(r"\beval\s*\("), "Arbitrary Code Execution via eval()", "critical", "command_execution", "app_data_write", "Dangerous dynamic code execution via eval() allows arbitrary attacker commands."),
         ("code-string-concat", re.compile(r"(?:new\s+Function|setTimeout|setInterval)\s*\([^)]*\+"), "Dynamic Code Injection via String Concatenation", "critical", "command_execution", "app_data_write", "Dynamic code construction using string concatenation facilitates code injection."),
-        ("private-key", re.compile(r"-----BEGIN (?:RSA |EC )?PRIVATE KEY-----"), "Exposed Cryptographic Private Key", "critical", "server_access, lateral_movement", "code_read_access", "Cryptographic private key hardcoded directly in source repository."),
+        ("private-key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"), "Exposed Cryptographic Private Key", "critical", "server_access, lateral_movement", "code_read_access", "Cryptographic private key hardcoded directly in source repository."),
         ("bcrypt-hash", re.compile(r"\$2[aby]\$[0-9]{2}\$[A-Za-z0-9./]{53}"), "Hardcoded Password Hash (Bcrypt)", "critical", "database_credentials", "code_read_access", "Bcrypt password hash exposed directly in source files."),
         ("open-redirect", re.compile(r"res\.redirect\s*\(\s*(?:req\.query|req\.params|req\.body)"), "Unvalidated Open URL Redirection", "medium", "web_access", "internet_access", "Unsanitized redirect target allows attackers to direct users to malicious domains."),
         ("docker-security", re.compile(r"USER\s+root"), "Insecure Container Configuration (Docker)", "medium", "privilege_escalation", "command_execution", "Container runs as privileged root user without least-privilege isolation."),
         ("csrf-missing", re.compile(r"app\.use\s*\(\s*session"), "Missing Cross-Site Request Forgery (CSRF) Protection", "critical", "app_data_write", "web_access", "Session middleware active without corresponding CSRF token protection on state-changing routes."),
+        # ── Command Injection ──
+        ("command-injection-python", re.compile(r"(?:os\.system|os\.popen|subprocess\.call|subprocess\.Popen|subprocess\.run)\s*\([^)]*(?:\+|%|format|f['\"])"), "OS Command Injection", "critical", "command_execution, server_access", "web_access", "User-controlled input passed to a system command execution function enables arbitrary command injection."),
+        ("command-injection-shell", re.compile(r"subprocess\.(?:call|run|Popen)\s*\([^)]*shell\s*=\s*True"), "Unsafe Shell Execution", "high", "command_execution", "app_data_write", "Subprocess invoked with shell=True is vulnerable to shell injection attacks."),
+        ("command-injection-node", re.compile(r"(?:child_process\.exec|child_process\.execSync|exec)\s*\([^)]*(?:\+|`)"), "OS Command Injection (Node.js)", "critical", "command_execution, server_access", "web_access", "User input concatenated into child_process.exec allows arbitrary command execution."),
+        # ── XSS (Cross-Site Scripting) ──
+        ("xss-innerhtml", re.compile(r"\.innerHTML\s*=\s*(?!\s*['\"]['\"])"), "DOM-Based Cross-Site Scripting (innerHTML)", "high", "session_hijacking, credential_theft", "web_access", "Setting innerHTML with dynamic content enables DOM-based XSS attacks."),
+        ("xss-document-write", re.compile(r"document\.write\s*\("), "DOM-Based Cross-Site Scripting (document.write)", "high", "session_hijacking, credential_theft", "web_access", "document.write with dynamic content enables DOM-based XSS attacks."),
+        ("xss-template-unescaped", re.compile(r"\{\{\s*\w+\s*\|\s*safe\s*\}\}|\{%\s*autoescape\s+false"), "Server-Side XSS via Unescaped Template Output", "high", "session_hijacking, credential_theft", "web_access", "Template rendering with autoescaping disabled or |safe filter allows stored/reflected XSS."),
+        # ── Weak Cryptography ──
+        ("weak-hash-md5", re.compile(r"(?:hashlib\.md5|MD5\.new|createHash\s*\(\s*['\"]md5)"), "Weak Cryptographic Hash (MD5)", "high", "credential_theft, authentication_bypass", "code_read_access", "MD5 is cryptographically broken and unsuitable for password hashing or integrity verification."),
+        ("weak-hash-sha1", re.compile(r"(?:hashlib\.sha1|SHA1\.new|createHash\s*\(\s*['\"]sha1)"), "Weak Cryptographic Hash (SHA1)", "medium", "credential_theft", "code_read_access", "SHA1 is cryptographically weakened and should not be used for security-sensitive hashing."),
+        # ── SSTI (Server-Side Template Injection) ──
+        ("ssti-flask", re.compile(r"render_template_string\s*\("), "Server-Side Template Injection (SSTI)", "critical", "command_execution, server_access", "web_access", "render_template_string with user-controlled input enables arbitrary code execution via Jinja2 template injection."),
+        # ── Path Traversal ──
+        ("path-traversal", re.compile(r"(?:open|send_file|send_from_directory)\s*\([^)]*(?:request\.|req\.|user_input|filename)"), "Path Traversal / Local File Inclusion", "high", "file_read_access, information_disclosure", "web_access", "File access function uses unvalidated user input, enabling directory traversal to read arbitrary files."),
+        # ── Insecure Deserialization ──
+        ("insecure-deserialize", re.compile(r"(?:pickle\.loads?|yaml\.(?:load|unsafe_load)|marshal\.loads?)\s*\("), "Insecure Deserialization", "critical", "command_execution, server_access", "app_data_write", "Deserializing untrusted data can lead to arbitrary code execution."),
+        # ── Debug Mode ──
+        ("debug-enabled", re.compile(r"(?:DEBUG\s*=\s*True|debug\s*=\s*True|app\.debug\s*=\s*True)"), "Debug Mode Enabled in Production", "medium", "information_disclosure", "internet_access", "Debug mode exposes stack traces, environment variables, and internal application state to attackers."),
+        # ── Hardcoded Passwords ──
+        ("hardcoded-password", re.compile(r"(?:password|passwd|pwd|secret)\s*=\s*['\"][^'\"]{4,}['\"]", re.IGNORECASE), "Hardcoded Password in Source Code", "critical", "database_credentials, server_access", "code_read_access", "Plaintext password hardcoded in source code exposes credentials to anyone with repository access."),
     ]
     for file_path in clone_dir.rglob("*"):
         if not file_path.is_file() or file_path.suffix in (".png", ".jpg", ".jpeg", ".svg", ".ico", ".lock", ".json", ".min.js"):
@@ -409,7 +431,7 @@ def scan_code(github_url: str, scan_id: str) -> list[dict]:
         # Cleanup
         shutil.rmtree(clone_dir, ignore_errors=True)
 
-        consolidated = _consolidate_code_findings(findings, max_findings=7)
+        consolidated = _consolidate_code_findings(findings, max_findings=15)
         insert_findings(consolidated, scan_id)
         return consolidated
     except Exception as e:
@@ -441,6 +463,25 @@ def _clean_code_finding_title(check_id: str) -> str:
         return "Insecure Cleartext Transport (HTTP)"
     if "sql" in low or "nosql" in low:
         return "Database Injection Vulnerability"
+    # ── New pattern title mappings ──
+    if "command-injection" in low or "shell-execution" in low:
+        return "OS Command Injection"
+    if "xss" in low or "innerhtml" in low or "document-write" in low:
+        return "Cross-Site Scripting (XSS)"
+    if "weak-hash-md5" in low:
+        return "Weak Cryptographic Hash (MD5)"
+    if "weak-hash-sha1" in low:
+        return "Weak Cryptographic Hash (SHA1)"
+    if "ssti" in low or "template-injection" in low or "render_template_string" in low:
+        return "Server-Side Template Injection (SSTI)"
+    if "path-traversal" in low or "file-inclusion" in low:
+        return "Path Traversal / Local File Inclusion"
+    if "insecure-deserialize" in low or "pickle" in low or "yaml.load" in low:
+        return "Insecure Deserialization"
+    if "debug-enabled" in low or "debug-mode" in low:
+        return "Debug Mode Enabled in Production"
+    if "hardcoded-password" in low:
+        return "Hardcoded Password in Source Code"
     if "password" in low or "hardcoded" in low:
         return "Hardcoded Credentials in Source Code"
     last = check_id.split(".")[-1]
