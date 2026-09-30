@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { Clock, Activity, GitBranch } from 'lucide-react';
 import { getScanHistory } from '../api/client';
 import type { ScanHistoryResponse, ScanSummary } from '../types/api';
@@ -18,7 +18,10 @@ function formatDate(isoString: string | null) {
 
 function SummaryCard({ title, scan, isLatest }: { title: string; scan: ScanSummary; isLatest?: boolean }) {
   return (
-    <div className={`p-5 rounded-2xl border ${isLatest ? 'bg-sentinel-accent/5 border-sentinel-accent/20' : 'bg-[#232820] border-[#3a4234]'}`}>
+    <Link 
+      to={`/scan/${scan.id}/dashboard`}
+      className={`block p-5 rounded-2xl border transition-colors hover:border-sentinel-accent/50 ${isLatest ? 'bg-[#2a3024] border-sentinel-accent/30' : 'bg-[#232820] border-[#3a4234]'}`}
+    >
       <h3 className="text-sm font-semibold text-sentinel-text mb-4">{title}</h3>
       <div className="text-xs text-sentinel-text-dim mb-4">{formatDate(scan.created_at)}</div>
       
@@ -40,7 +43,7 @@ function SummaryCard({ title, scan, isLatest }: { title: string; scan: ScanSumma
           <span className="text-sm font-mono text-sentinel-text">{scan.attack_paths}</span>
         </div>
       </div>
-    </div>
+    </Link>
   );
 }
 
@@ -140,10 +143,14 @@ export default function ScanHistoryPage() {
               <h3 className="text-sm font-medium text-sentinel-text mb-4 px-2">Previous Scans</h3>
               <div className="space-y-2">
                 {data.older_scans.map(scan => (
-                  <div key={scan.id} className="flex items-center justify-between p-4 rounded-xl bg-[#232820] border border-transparent hover:border-[#3a4234] transition-colors">
-                    <div className="text-sm text-sentinel-text">{formatDate(scan.created_at)}</div>
+                  <Link
+                    key={scan.id}
+                    to={`/scan/${scan.id}/dashboard`}
+                    className="flex items-center justify-between p-4 rounded-xl bg-[#232820] border border-transparent hover:border-[#3a4234] transition-colors cursor-pointer group"
+                  >
+                    <div className="text-sm text-sentinel-text group-hover:text-sentinel-accent transition-colors">{formatDate(scan.created_at)}</div>
                     <div className="text-sm font-mono text-sentinel-text-muted">{scan.total_findings} findings</div>
-                  </div>
+                  </Link>
                 ))}
               </div>
             </div>
