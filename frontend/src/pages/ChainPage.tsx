@@ -9,7 +9,7 @@ import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import cytoscape from 'cytoscape';
 import { getChain } from '../api/client';
-import type { Severity, ChainResponse } from '../types/api';
+import type { Severity, ChainResponse, ChainEdge } from '../types/api';
 import { X, ZoomIn, ZoomOut, Maximize2, Shield, Code, Terminal, Globe, Database, Lock, Bug, Eye, Server, Key, FileWarning, Hash } from 'lucide-react';
 
 // ── Color system ──
@@ -165,7 +165,7 @@ export default function ChainPage() {
 
   // ── Compute primary path and classify nodes ──
   const { connectedNodes, isolatedNodes, primaryPath, primaryEdges, allEdges, processedNodeMap } = useMemo(() => {
-    if (!chainData) return { connectedNodes: [] as ProcessedNode[], isolatedNodes: [] as ProcessedNode[], primaryPath: [] as string[], primaryEdges: new Set<string>(), allEdges: chainData?.edges || [], processedNodeMap: new Map<string, ProcessedNode>() };
+    if (!chainData) return { connectedNodes: [] as ProcessedNode[], isolatedNodes: [] as ProcessedNode[], primaryPath: [] as string[], primaryEdges: new Set<string>(), allEdges: [] as ChainEdge[], processedNodeMap: new Map<string, ProcessedNode>() };
 
     const edgeNodeIds = new Set<string>();
     chainData.edges.forEach(e => {
