@@ -3,7 +3,6 @@
 **Autonomous Multi-Layer Security Intelligence Platform**  
 **Team Triumph · ASYNC'26 · Cybersecurity & Defense**
 
-
 SENTINEL AI is a defensive security platform that brings findings from different security tools into one place, correlates related weaknesses, and shows how they could combine into a possible attack path.
 
 Most security tools are good at finding individual issues. The harder problem is understanding whether those issues are connected, what they could lead to, and which fix could break the path first.
@@ -45,6 +44,7 @@ If the evidence does not support a relationship, SENTINEL leaves the findings di
 
 ## System Architecture
 
+![SENTINEL AI System Architecture](SENTINEL_ARCHITECTURE.png)
 
 SENTINEL combines specialized security tools instead of trying to replace them.
 
@@ -199,8 +199,7 @@ Current safety boundaries:
 **Demo video:** https://youtu.be/aXEQfGe7hQw
 
 **Frontend (Vercel):** https://sentinel-ai-psi-seven.vercel.app/  
-**Backend (Render):**  https://dashboard.render.com/web/srv-dat7r3d9fdbs7381s7dg/deploys
-**Supabase project:** https://maqwujyaosetzwqasmbq.supabase.co
+**Backend (Render):** https://sentinel-ai-108y.onrender.com
 
 Recommended demo flow:
 
@@ -345,7 +344,7 @@ curl -o report.pdf http://localhost:8000/scan/<scan_id>/report
 
 ## Testing and Quality Control
 
-GitHub Actions is used for CI. Replace the generic CI badge at the top of this README with the repository's live workflow badge once the final repository URL and workflow filename are fixed.
+GitHub Actions is used for continuous integration.
 
 Backend checks:
 
@@ -426,9 +425,7 @@ Check `SUPABASE_URL` and `SUPABASE_SERVICE_KEY`. The current project configurati
 
 ## Security Reporting
 
-If you discover a security issue in SENTINEL itself, **do not publish exploit details in a public issue**. Report the issue privately to the repository maintainers using the private contact method associated with the final repository.
-
-`<security-contact-or-private-reporting-link>`
+If you discover a security issue in SENTINEL itself, **do not publish exploit details in a public issue**. Report the issue privately to the repository maintainers.
 
 ---
 
